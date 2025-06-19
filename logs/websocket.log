@@ -1,0 +1,2 @@
+{"timestamp": "2025-06-19T13:42:52.994710", "level": "INFO", "logger": "websocket", "message": "WebSocket connection established", "module": "logger", "function": "log_websocket_connection", "line": 181, "device_id": "ABCD1234"}
+{"timestamp": "2025-06-19T13:42:53.678885", "level": "INFO", "logger": "websocket", "message": "WebSocket connection closed", "module": "logger", "function": "log_websocket_disconnection", "line": 194, "device_id": "ABCD1234", "duration": 1.791483}
