@@ -1,5 +1,5 @@
 """
-WebSocket routes for ESP32 device connections
+Fixed WebSocket routes for ESP32 device connections
 """
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, status
 from fastapi.responses import JSONResponse
@@ -73,22 +73,22 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
     device_id = SecurityValidator.sanitize_input(device_id)
     
     try:
-        # Attempt to connect device
-        connected = await websocket_routes.websocket_manager.connect_device(
+        # Attempt to connect device - this handles the entire connection lifecycle
+        await websocket_routes.websocket_manager.connect_device(
             websocket=websocket,
             device_id=device_id,
             remote_addr=client_ip
         )
         
-        if not connected:
-            websocket_routes.log_warning(f"Failed to establish connection for device: {device_id}")
-            return
+        # The connect_device method will handle the connection and won't return
+        # until the connection is closed. It manages:
+        # 1. WebSocket acceptance
+        # 2. User validation
+        # 3. OpenAI connection setup
+        # 4. Message handling loop
+        # 5. Cleanup on disconnect
         
-        # Connection established successfully
-        websocket_routes.log_info(f"WebSocket connection established: {device_id} from {client_ip}")
-        
-        # The connection will be handled by the WebSocketConnectionManager
-        # This function will return when the connection is closed
+        websocket_routes.log_info(f"WebSocket session completed for {device_id}")
         
     except WebSocketDisconnect:
         websocket_routes.log_info(f"WebSocket client disconnected: {device_id}")
