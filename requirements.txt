@@ -1,0 +1,42 @@
+# ESP32 Audio Streaming Server Dependencies
+
+# FastAPI and ASGI
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+websockets==12.0
+python-multipart==0.0.6
+
+# Pydantic for data validation
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Firebase (Optional - only needed for full functionality)
+firebase-admin==6.2.0
+google-cloud-firestore==2.13.1
+
+# Async HTTP client
+httpx==0.25.2
+
+# Environment variables
+python-dotenv==1.0.0
+
+# JSON handling
+orjson==3.9.10
+
+# Date/time utilities
+python-dateutil==2.8.2
+
+# Cryptography (for security)
+cryptography==41.0.7
+
+# Development dependencies (optional)
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+black==23.11.0
+isort==5.12.0
+flake8
+mypy==1.7.1
+
+# Production deployment (optional)
+gunicorn==21.2.0

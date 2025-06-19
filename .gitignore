@@ -1,0 +1,9 @@
+.env
+firebase-credentials.json
+__pycache__
+*.pyc
+Dockerfile
+docker-compose.yml
+.venv/
+extra.md
+esp32_server.log

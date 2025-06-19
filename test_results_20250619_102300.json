@@ -1,0 +1,227 @@
+{
+  "test_info": {
+    "server_url": "http://localhost:8001",
+    "websocket_url": "ws://localhost:8000",
+    "timestamp": "2025-06-19T10:23:00.518533",
+    "total_tests": 22,
+    "passed_tests": 20,
+    "failed_tests": 2
+  },
+  "results": [
+    {
+      "name": "Root Endpoint",
+      "success": true,
+      "message": "Server running (2.062s)",
+      "duration": 2.0622096061706543,
+      "timestamp": "2025-06-19T10:22:54.639531",
+      "response_data": {
+        "message": "ESP32 Audio Streaming Server is running",
+        "version": "1.0.0",
+        "status": "healthy",
+        "documentation": "/docs",
+        "websocket_endpoint": "/ws/{device_id}",
+        "features": [
+          "ESP32 WebSocket connections",
+          "OpenAI Realtime API integration",
+          "User registration and management",
+          "System prompt management",
+          "Session tracking",
+          "Security middleware",
+          "Comprehensive logging"
+        ]
+      }
+    },
+    {
+      "name": "Health Check",
+      "success": true,
+      "message": "Status: healthy (0.500s)",
+      "duration": 0.5002517700195312,
+      "timestamp": "2025-06-19T10:22:55.139782",
+      "response_data": {
+        "status": "healthy",
+        "timestamp": "2025-06-19T10:22:54.641538",
+        "services": {
+          "firebase": "healthy",
+          "websocket": {
+            "status": "healthy",
+            "active_connections": 0
+          },
+          "openai": {
+            "status": "healthy",
+            "active_connections": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "Metrics Endpoint",
+      "success": true,
+      "message": "Metrics available (0.005s)",
+      "duration": 0.005007743835449219,
+      "timestamp": "2025-06-19T10:22:55.144790",
+      "response_data": {
+        "metrics": {
+          "request_count": 0,
+          "error_count": 0,
+          "total_process_time": 0.0,
+          "request_counts_by_path": {},
+          "error_counts_by_status": {},
+          "response_times": []
+        },
+        "note": "Metrics are collected automatically and reset periodically"
+      }
+    },
+    {
+      "name": "API Documentation",
+      "success": true,
+      "message": "Docs accessible (0.007s)",
+      "duration": 0.0071604251861572266,
+      "timestamp": "2025-06-19T10:22:55.152935",
+      "response_data": null
+    },
+    {
+      "name": "Valid Device ID: ABCD1234",
+      "success": true,
+      "message": "Validation passed (0.006s)",
+      "duration": 0.0,
+      "timestamp": "2025-06-19T10:22:55.159219",
+      "response_data": null
+    },
+    {
+      "name": "Valid Device ID: TEST0001",
+      "success": true,
+      "message": "Validation passed (0.010s)",
+      "duration": 0.0,
+      "timestamp": "2025-06-19T10:22:55.169770",
+      "response_data": null
+    },
+    {
+      "name": "Valid Device ID: USER9999",
+      "success": true,
+      "message": "Validation passed (0.005s)",
+      "duration": 0.0,
+      "timestamp": "2025-06-19T10:22:55.174307",
+      "response_data": null
+    },
+    {
+      "name": "Valid Device ID: DEMO5678",
+      "success": true,
+      "message": "Validation passed (0.011s)",
+      "duration": 0.0,
+      "timestamp": "2025-06-19T10:22:55.184837",
+      "response_data": null
+    },
+    {
+      "name": "Invalid Device ID: abc1234",
+      "success": true,
+      "message": "Correctly rejected (0.017s)",
+      "duration": 0.0,
+      "timestamp": "2025-06-19T10:22:55.201950",
+      "response_data": null
+    },
+    {
+      "name": "Invalid Device ID: ABCD123",
+      "success": true,
+      "message": "Correctly rejected (0.078s)",
+      "duration": 0.0,
+      "timestamp": "2025-06-19T10:22:55.306512",
+      "response_data": null
+    },
+    {
+      "name": "Invalid Device ID: ABCD12345",
+      "success": true,
+      "message": "Correctly rejected (0.006s)",
+      "duration": 0.0,
+      "timestamp": "2025-06-19T10:22:55.312536",
+      "response_data": null
+    },
+    {
+      "name": "Invalid Device ID: 1234ABCD",
+      "success": true,
+      "message": "Correctly rejected (0.006s)",
+      "duration": 0.0,
+      "timestamp": "2025-06-19T10:22:55.320578",
+      "response_data": null
+    },
+    {
+      "name": "Invalid Device ID: ",
+      "success": true,
+      "message": "Correctly rejected (0.006s)",
+      "duration": 0.0,
+      "timestamp": "2025-06-19T10:22:55.326091",
+      "response_data": null
+    },
+    {
+      "name": "Invalid Device ID: invalid",
+      "success": true,
+      "message": "Correctly rejected (0.008s)",
+      "duration": 0.0,
+      "timestamp": "2025-06-19T10:22:55.334236",
+      "response_data": null
+    },
+    {
+      "name": "Register User: ABCD1234",
+      "success": true,
+      "message": "User already exists (expected) (0.995s)",
+      "duration": 0.0,
+      "timestamp": "2025-06-19T10:22:56.329145",
+      "response_data": null
+    },
+    {
+      "name": "Register User: TEST0001",
+      "success": true,
+      "message": "User already exists (expected) (0.656s)",
+      "duration": 0.0,
+      "timestamp": "2025-06-19T10:22:56.987850",
+      "response_data": null
+    },
+    {
+      "name": "Register User: USER9999",
+      "success": true,
+      "message": "User already exists (expected) (1.103s)",
+      "duration": 0.0,
+      "timestamp": "2025-06-19T10:22:58.091759",
+      "response_data": null
+    },
+    {
+      "name": "Register User: DEMO5678",
+      "success": true,
+      "message": "User already exists (expected) (0.717s)",
+      "duration": 0.0,
+      "timestamp": "2025-06-19T10:22:58.808626",
+      "response_data": null
+    },
+    {
+      "name": "Duplicate Registration Prevention",
+      "success": true,
+      "message": "Correctly prevented duplicate (1.025s)",
+      "duration": 0.0,
+      "timestamp": "2025-06-19T10:22:59.833717",
+      "response_data": null
+    },
+    {
+      "name": "Invalid Registration Data",
+      "success": true,
+      "message": "Correctly rejected invalid data (0.006s)",
+      "duration": 0.0,
+      "timestamp": "2025-06-19T10:22:59.839908",
+      "response_data": null
+    },
+    {
+      "name": "Verify User: ABCD1234",
+      "success": false,
+      "message": "User verification failed: {'registered': False, 'device_id': 'ABCD1234'}",
+      "duration": 0.0,
+      "timestamp": "2025-06-19T10:23:00.503458",
+      "response_data": null
+    },
+    {
+      "name": "Verify User: TEST0001",
+      "success": false,
+      "message": "User verification failed: {'error': 'Not Found', 'message': 'The requested resource was not found', 'code': 'NOT_FOUND'}",
+      "duration": 0.0,
+      "timestamp": "2025-06-19T10:23:00.508974",
+      "response_data": null
+    }
+  ]
+}
