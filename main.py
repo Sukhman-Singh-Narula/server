@@ -1,6 +1,5 @@
 """
-ESP32 Audio Streaming Server - Main Application
-A FastAPI server for managing ESP32 device connections with OpenAI Realtime API integration
+ESP32 Audio Streaming Server - Main Application (Fixed)
 """
 import asyncio
 from contextlib import asynccontextmanager
@@ -57,8 +56,6 @@ async def lifespan(app: FastAPI):
         print("✅ OpenAI service initialized")
         
         websocket_manager = get_websocket_manager()
-        # Start cleanup task now that event loop is running
-        await websocket_manager._ensure_cleanup_task_started()
         print("✅ WebSocket manager initialized")
         
         print("🎯 Server startup completed successfully")

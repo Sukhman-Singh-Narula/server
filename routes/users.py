@@ -1,5 +1,5 @@
 """
-User management routes
+User management routes (Fixed)
 """
 from fastapi import APIRouter, HTTPException, status, Query, Depends
 from typing import List, Optional
@@ -32,6 +32,18 @@ class ProgressUpdateRequest(BaseModel):
     """Request model for updating user progress"""
     words_learnt: Optional[List[str]] = None
     topics_learnt: Optional[List[str]] = None
+
+
+class UserRoutes(LoggerMixin):
+    """User route handlers"""
+    
+    def __init__(self):
+        super().__init__()
+        self.user_service = get_user_service()
+        self.websocket_manager = get_websocket_manager()
+
+
+user_routes = UserRoutes()
 
 
 @router.get("/{device_id}",
@@ -92,9 +104,7 @@ async def get_user_statistics(device_id: str, user_service: UserService = Depend
     try:
         statistics = await user_service.get_user_statistics(device_id)
         
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"User statistics retrieved: {device_id}")
+        user_routes.log_info(f"User statistics retrieved: {device_id}")
         return statistics
         
     except ValidationException as e:
@@ -118,7 +128,6 @@ async def get_user_statistics(device_id: str, user_service: UserService = Depend
 
 
 @router.get("/{device_id}/session",
-            response_model=SessionInfo,
             summary="Get current session information",
             description="Get information about the user's current session")
 async def get_session_info(device_id: str):
@@ -129,14 +138,15 @@ async def get_session_info(device_id: str):
     """
     try:
         # Get connection info from WebSocket manager
-        connection_info = user_routes.websocket_manager.get_connection_info(device_id)
+        connections = user_routes.websocket_manager.get_active_connections()
+        connection_info = connections.get(device_id)
         
         if connection_info:
             session_info = await user_routes.user_service.get_user_session_info(
                 device_id=device_id,
-                session_duration=connection_info["session_duration"],
+                session_duration=connection_info["duration"],
                 is_connected=True,
-                is_openai_connected=True  # Would check OpenAI service
+                is_openai_connected=device_id in user_routes.websocket_manager.openai_service.active_connections
             )
         else:
             # User exists but not currently connected
@@ -186,7 +196,9 @@ async def get_session_duration(device_id: str):
             raise ValidationException(error_msg, "device_id", device_id)
         
         # Get session duration from WebSocket manager
-        duration = user_routes.websocket_manager.get_session_duration(device_id)
+        connections = user_routes.websocket_manager.get_active_connections()
+        connection_info = connections.get(device_id)
+        duration = connection_info["duration"] if connection_info else 0.0
         
         return {
             "device_id": device_id,
@@ -340,7 +352,7 @@ async def get_active_connections():
     Note: This would typically require admin authentication
     """
     try:
-        connections = user_routes.websocket_manager.get_all_connections()
+        connections = user_routes.websocket_manager.get_active_connections()
         
         return {
             "active_connections": len(connections),
