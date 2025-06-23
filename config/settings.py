@@ -5,7 +5,6 @@ from pydantic_settings import BaseSettings
 from typing import Optional
 import os
 
-
 class Settings(BaseSettings):
     """Application settings with environment variable support"""
     
@@ -23,7 +22,7 @@ class Settings(BaseSettings):
     # OpenAI Configuration
     openai_api_key: str = ""
     openai_realtime_url: str = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17"
-    openai_voice_model: str = "alloy"  # Options: alloy, ash, ballad, coral, echo, sage, shimmer, verse
+    openai_voice_model: str = "ballad"  # Options: alloy, ash, ballad, coral, echo, sage, shimmer, verse
     
     # Audio Configuration
     audio_format: str = "pcm16"

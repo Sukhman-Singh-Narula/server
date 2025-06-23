@@ -1,5 +1,5 @@
 """
-Streamlined WebSocket service for ESP32 connections
+Fixed WebSocket service for ESP32 connections
 """
 import asyncio
 import json
@@ -14,7 +14,7 @@ from utils.logger import LoggerMixin
 
 
 class WebSocketConnectionManager(LoggerMixin):
-    """Simplified WebSocket connection manager"""
+    """Fixed WebSocket connection manager"""
     
     def __init__(self):
         super().__init__()
@@ -28,6 +28,10 @@ class WebSocketConnectionManager(LoggerMixin):
         # Audio buffering for minimum chunk size
         self.audio_buffers: Dict[str, bytearray] = {}
         self.buffer_timers: Dict[str, asyncio.Task] = {}
+        
+        # FIXED: Add silence detection for better conversation flow
+        self.last_audio_time: Dict[str, float] = {}
+        self.silence_threshold = 1.0  # 1 second of silence before committing buffer
     
     async def connect_device(self, websocket: WebSocket, device_id: str, remote_addr: str):
         """Handle ESP32 device connection"""
@@ -46,6 +50,7 @@ class WebSocketConnectionManager(LoggerMixin):
             self.connections[device_id] = websocket
             self.connection_times[device_id] = time.time()
             self.audio_buffers[device_id] = bytearray()
+            self.last_audio_time[device_id] = time.time()
             
             # Create OpenAI connection
             await self.openai_service.create_connection(
@@ -63,6 +68,9 @@ class WebSocketConnectionManager(LoggerMixin):
             }))
             
             self.log_info(f"Device ready: {device_id}")
+            
+            # FIXED: Start silence detection task
+            asyncio.create_task(self._silence_detection_loop(device_id))
             
             # Handle messages
             await self._handle_messages(websocket, device_id)
@@ -107,8 +115,11 @@ class WebSocketConnectionManager(LoggerMixin):
             self.log_error(f"❌ Message handling error for {device_id}: {e}", exc_info=True)
     
     async def _handle_audio_data(self, device_id: str, audio_data: bytes):
-        """Handle audio data with buffering for minimum chunk size"""
+        """Handle audio data with improved buffering and silence detection"""
         self.log_info(f"📤 Received audio chunk from ESP32 {device_id}: {len(audio_data)} bytes")
+        
+        # Update last audio time
+        self.last_audio_time[device_id] = time.time()
         
         # Add to buffer
         self.audio_buffers[device_id].extend(audio_data)
@@ -120,15 +131,15 @@ class WebSocketConnectionManager(LoggerMixin):
         if device_id in self.buffer_timers:
             self.buffer_timers[device_id].cancel()
         
-        # Send if buffer is large enough (at least 1600 bytes for 100ms at 16kHz PCM16)
-        if buffer_size >= 3200:  # 200ms of audio
+        # Send if buffer is large enough (at least 3200 bytes for 200ms at 16kHz PCM16)
+        if buffer_size >= 3200:
             self.log_info(f"🚀 Buffer full, sending audio for {device_id}")
             await self._send_buffered_audio(device_id)
         else:
-            # Set timer to send after 100ms if no more audio comes
+            # Set timer to send after 200ms if no more audio comes
             self.log_info(f"⏰ Setting timer for {device_id} (buffer: {buffer_size} bytes)")
             self.buffer_timers[device_id] = asyncio.create_task(
-                self._send_audio_after_delay(device_id, 0.1)
+                self._send_audio_after_delay(device_id, 0.2)
             )
     
     async def _send_audio_after_delay(self, device_id: str, delay: float):
@@ -164,7 +175,49 @@ class WebSocketConnectionManager(LoggerMixin):
             self.log_info(f"🧹 Cleared audio buffer for {device_id}")
         else:
             self.log_error(f"❌ Failed to send audio to OpenAI for {device_id}")
-            # Don't clear buffer on failure - maybe retry logic could be added
+    
+    async def _silence_detection_loop(self, device_id: str):
+        """FIXED: Detect silence and commit audio buffer to trigger responses"""
+        last_commit_time = 0
+        
+        while device_id in self.connections:
+            try:
+                await asyncio.sleep(0.5)  # Check every 500ms
+                
+                if device_id not in self.last_audio_time:
+                    continue
+                
+                current_time = time.time()
+                silence_duration = current_time - self.last_audio_time[device_id]
+                
+                # Only commit if we have enough silence and haven't committed recently
+                if (silence_duration >= self.silence_threshold and 
+                    current_time - last_commit_time > 2.0):  # Don't commit more than once every 2 seconds
+                    
+                    # Only commit if we actually sent some audio recently
+                    if (device_id in self.audio_buffers and 
+                        current_time - self.last_audio_time[device_id] < 10.0):  # Audio was sent within last 10 seconds
+                        
+                        self.log_info(f"🎯 Committing audio buffer for {device_id} after {silence_duration:.1f}s silence")
+                        
+                        # Send any remaining buffered audio first
+                        if len(self.audio_buffers[device_id]) > 0:
+                            await self._send_buffered_audio(device_id)
+                            await asyncio.sleep(0.1)
+                        
+                        # Commit and trigger response
+                        commit_success = await self.openai_service.commit_audio_buffer(device_id)
+                        if commit_success:
+                            await asyncio.sleep(0.1)
+                            await self.openai_service.create_response(device_id)
+                            last_commit_time = current_time
+                            self.log_info(f"✅ Successfully triggered response for {device_id}")
+                        else:
+                            self.log_warning(f"⚠️ Failed to commit audio buffer for {device_id}")
+                
+            except Exception as e:
+                self.log_error(f"❌ Silence detection error for {device_id}: {e}")
+                break
     
     async def _handle_text_message(self, device_id: str, data: dict):
         """Handle JSON text messages"""
@@ -180,11 +233,18 @@ class WebSocketConnectionManager(LoggerMixin):
         
         elif msg_type == "start_recording":
             self.log_info(f"🎤 Recording started for {device_id}")
+            # Reset silence timer
+            self.last_audio_time[device_id] = time.time()
             
         elif msg_type == "stop_recording":
-            # Send any remaining buffered audio
+            # Send any remaining buffered audio and commit
             self.log_info(f"🛑 Recording stopped for {device_id}, flushing buffer")
             await self._send_buffered_audio(device_id)
+            
+            # FIXED: Commit buffer and trigger response
+            await asyncio.sleep(0.1)
+            await self.openai_service.commit_audio_buffer(device_id)
+            await self.openai_service.create_response(device_id)
         
         else:
             self.log_info(f"🤔 Unknown text message type from {device_id}: {msg_type}")
@@ -238,6 +298,8 @@ class WebSocketConnectionManager(LoggerMixin):
             del self.connections[device_id]
         if device_id in self.audio_buffers:
             del self.audio_buffers[device_id]
+        if device_id in self.last_audio_time:
+            del self.last_audio_time[device_id]
         
         self.log_info(f"Cleaned up connection for {device_id}")
     
@@ -252,6 +314,7 @@ class WebSocketConnectionManager(LoggerMixin):
             for device_id in self.connections.keys()
         }
     
+    # Keep existing methods unchanged...
     async def disconnect_device(self, device_id: str):
         """Manually disconnect a device"""
         if device_id in self.connections:

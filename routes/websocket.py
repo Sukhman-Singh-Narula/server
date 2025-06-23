@@ -50,10 +50,12 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
     # Get client IP for logging
     client_ip = websocket.client.host if websocket.client else "unknown"
     
+    websocket_routes.log_info(f"🔗 WebSocket connection attempt from {client_ip} for device {device_id}")
+    
     # Validate device ID format
     if not DeviceValidator.validate_device_id(device_id):
         error_msg = DeviceValidator.get_device_validation_error(device_id)
-        websocket_routes.log_warning(f"Invalid device ID connection attempt: {device_id} from {client_ip}")
+        websocket_routes.log_warning(f"❌ Invalid device ID connection attempt: {device_id} from {client_ip}")
         
         # Log security event
         log_security_event(
@@ -72,29 +74,40 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
     # Sanitize device ID (additional security)
     device_id = SecurityValidator.sanitize_input(device_id)
     
+    connection_successful = False
+    
     try:
-        # Attempt to connect device - this handles the entire connection lifecycle
-        await websocket_routes.websocket_manager.connect_device(
+        # Attempt to connect device
+        connection_successful = await websocket_routes.websocket_manager.connect_device(
             websocket=websocket,
             device_id=device_id,
             remote_addr=client_ip
         )
         
-        # The connect_device method will handle the connection and won't return
-        # until the connection is closed. It manages:
-        # 1. WebSocket acceptance
-        # 2. User validation
-        # 3. OpenAI connection setup
-        # 4. Message handling loop
-        # 5. Cleanup on disconnect
+        if not connection_successful:
+            websocket_routes.log_warning(f"❌ Failed to establish connection for device: {device_id}")
+            return
         
-        websocket_routes.log_info(f"WebSocket session completed for {device_id}")
+        # Connection established successfully - now wait for it to be closed
+        # The connection will be managed by the WebSocketConnectionManager
+        websocket_routes.log_info(f"✅ WebSocket connection established and handed over to manager: {device_id}")
+        
+        # Wait for the connection to be closed by either the client or server
+        # This prevents the route from returning immediately
+        try:
+            # Keep the route alive by waiting for the connection to be removed from manager
+            while device_id in websocket_routes.websocket_manager.websocket_connections:
+                await asyncio.sleep(1)
+        except Exception as e:
+            websocket_routes.log_error(f"❌ Error while waiting for connection {device_id}: {e}")
+        
+        websocket_routes.log_info(f"🔚 WebSocket route completed for {device_id}")
         
     except WebSocketDisconnect:
-        websocket_routes.log_info(f"WebSocket client disconnected: {device_id}")
+        websocket_routes.log_info(f"🔌 WebSocket client disconnected: {device_id}")
     
     except Exception as e:
-        websocket_routes.log_error(f"WebSocket error for device {device_id}: {e}", exc_info=True)
+        websocket_routes.log_error(f"❌ WebSocket error for device {device_id}: {e}", exc_info=True)
         
         # Log security event for unexpected errors
         log_security_event(
@@ -108,10 +121,29 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
         )
         
         try:
-            await websocket.close(code=1011, reason="Internal server error")
+            if not connection_successful:
+                await websocket.close(code=1011, reason="Internal server error")
         except Exception:
             pass  # Connection might already be closed
+    
+    finally:
+        # Ensure cleanup happens
+        try:
+            if connection_successful and device_id in websocket_routes.websocket_manager.connections:
+                from models.websocket import DisconnectionReason
+                await websocket_routes.websocket_manager.disconnect_device(
+                    device_id, 
+                    DisconnectionReason.CLIENT_DISCONNECT
+                )
+        except Exception as e:
+            websocket_routes.log_error(f"❌ Error during WebSocket cleanup for {device_id}: {e}")
 
+
+# Import asyncio at the top
+import asyncio
+
+
+# Rest of the existing routes remain the same...
 
 @router.get("/ws/connections",
             summary="Get active WebSocket connections",
