@@ -1,4 +1,0 @@
-{"timestamp": "2025-06-20T16:18:37.710001", "level": "INFO", "logger": "user", "message": "User progress updated", "module": "logger", "function": "log_user_progress", "line": 222, "device_id": "ABCD1234"}
-{"timestamp": "2025-06-20T16:18:41.429364", "level": "INFO", "logger": "user", "message": "User progress updated", "module": "logger", "function": "log_user_progress", "line": 222, "device_id": "ABCD1234"}
-{"timestamp": "2025-06-20T22:09:42.730655", "level": "INFO", "logger": "user", "message": "User progress updated", "module": "logger", "function": "log_user_progress", "line": 222, "device_id": "ABCD1234"}
-{"timestamp": "2025-06-20T22:09:46.504370", "level": "INFO", "logger": "user", "message": "User progress updated", "module": "logger", "function": "log_user_progress", "line": 222, "device_id": "ABCD1234"}

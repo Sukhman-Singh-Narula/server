@@ -1,5 +1,5 @@
 """
-Fixed OpenAI Realtime API service
+Fixed OpenAI Realtime API service - RACE CONDITION SAFE
 """
 import asyncio
 import json
@@ -225,11 +225,14 @@ class OpenAIConnection(LoggerMixin):
         """Close the connection"""
         self.is_connected = False
         if self.websocket:
-            await self.websocket.close()
+            try:
+                await self.websocket.close()
+            except Exception as e:
+                self.log_warning(f"⚠️ Error closing OpenAI websocket for {self.device_id}: {e}")
 
 
 class OpenAIService(LoggerMixin):
-    """Fixed OpenAI service"""
+    """Fixed OpenAI service - RACE CONDITION SAFE"""
     
     def __init__(self, api_key: str):
         super().__init__()
@@ -239,6 +242,7 @@ class OpenAIService(LoggerMixin):
     async def create_connection(self, device_id: str, system_prompt: str,
                               audio_callback: Callable[[str, bytes], None]) -> OpenAIConnection:
         """Create new OpenAI connection"""
+        # FIXED: Close existing connection safely
         if device_id in self.active_connections:
             await self.close_connection(device_id)
         
@@ -272,14 +276,28 @@ class OpenAIService(LoggerMixin):
         return await self.active_connections[device_id].create_response()
     
     async def close_connection(self, device_id: str):
-        """Close connection"""
+        """Close connection - FIXED to handle KeyError gracefully"""
         if device_id in self.active_connections:
-            await self.active_connections[device_id].close()
-            del self.active_connections[device_id]
+            try:
+                await self.active_connections[device_id].close()
+                del self.active_connections[device_id]
+                self.log_info(f"✅ Closed OpenAI connection for {device_id}")
+            except KeyError:
+                # Connection was already removed by another call
+                self.log_warning(f"⚠️ OpenAI connection for {device_id} already removed")
+            except Exception as e:
+                self.log_error(f"❌ Error closing OpenAI connection for {device_id}: {e}")
+                # Still try to remove from active_connections
+                try:
+                    del self.active_connections[device_id]
+                except KeyError:
+                    pass
     
     async def close_all_connections(self):
         """Close all connections"""
-        for device_id in list(self.active_connections.keys()):
+        # Create a list of device_ids to avoid dictionary changed during iteration
+        device_ids = list(self.active_connections.keys())
+        for device_id in device_ids:
             await self.close_connection(device_id)
 
 

@@ -1,6 +1,7 @@
 """
 Fixed WebSocket routes for ESP32 device connections
 """
+import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, status
 from fastapi.responses import JSONResponse
 
@@ -74,8 +75,6 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
     # Sanitize device ID (additional security)
     device_id = SecurityValidator.sanitize_input(device_id)
     
-    connection_successful = False
-    
     try:
         # Attempt to connect device
         connection_successful = await websocket_routes.websocket_manager.connect_device(
@@ -84,24 +83,10 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
             remote_addr=client_ip
         )
         
-        if not connection_successful:
-            websocket_routes.log_warning(f"❌ Failed to establish connection for device: {device_id}")
-            return
-        
-        # Connection established successfully - now wait for it to be closed
-        # The connection will be managed by the WebSocketConnectionManager
-        websocket_routes.log_info(f"✅ WebSocket connection established and handed over to manager: {device_id}")
-        
-        # Wait for the connection to be closed by either the client or server
-        # This prevents the route from returning immediately
-        try:
-            # Keep the route alive by waiting for the connection to be removed from manager
-            while device_id in websocket_routes.websocket_manager.websocket_connections:
-                await asyncio.sleep(1)
-        except Exception as e:
-            websocket_routes.log_error(f"❌ Error while waiting for connection {device_id}: {e}")
-        
-        websocket_routes.log_info(f"🔚 WebSocket route completed for {device_id}")
+        if connection_successful:
+            websocket_routes.log_info(f"✅ WebSocket connection completed successfully: {device_id}")
+        else:
+            websocket_routes.log_warning(f"❌ WebSocket connection failed: {device_id}")
         
     except WebSocketDisconnect:
         websocket_routes.log_info(f"🔌 WebSocket client disconnected: {device_id}")
@@ -120,27 +105,15 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
             }
         )
         
+        # Try to close gracefully if not already closed
         try:
-            if not connection_successful:
+            if websocket.client_state.name == 'CONNECTED':
                 await websocket.close(code=1011, reason="Internal server error")
         except Exception:
             pass  # Connection might already be closed
     
     finally:
-        # Ensure cleanup happens
-        try:
-            if connection_successful and device_id in websocket_routes.websocket_manager.connections:
-                from models.websocket import DisconnectionReason
-                await websocket_routes.websocket_manager.disconnect_device(
-                    device_id, 
-                    DisconnectionReason.CLIENT_DISCONNECT
-                )
-        except Exception as e:
-            websocket_routes.log_error(f"❌ Error during WebSocket cleanup for {device_id}: {e}")
-
-
-# Import asyncio at the top
-import asyncio
+        websocket_routes.log_info(f"🔚 WebSocket route completed for {device_id}")
 
 
 # Rest of the existing routes remain the same...
@@ -161,7 +134,7 @@ async def get_active_websocket_connections():
     Note: This endpoint would typically require admin authentication in production
     """
     try:
-        connections = websocket_routes.websocket_manager.get_all_connections()
+        connections = websocket_routes.websocket_manager.get_active_connections()
         
         websocket_routes.log_info("Active WebSocket connections requested")
         
@@ -198,7 +171,8 @@ async def get_websocket_connection_info(device_id: str):
             )
         
         # Get connection info
-        connection_info = websocket_routes.websocket_manager.get_connection_info(device_id)
+        connections = websocket_routes.websocket_manager.get_active_connections()
+        connection_info = connections.get(device_id)
         
         if connection_info is None:
             return {
@@ -208,7 +182,11 @@ async def get_websocket_connection_info(device_id: str):
             }
         
         websocket_routes.log_info(f"Connection info retrieved for device: {device_id}")
-        return connection_info
+        return {
+            "device_id": device_id,
+            "is_connected": True,
+            **connection_info
+        }
         
     except HTTPException:
         raise
@@ -242,7 +220,9 @@ async def disconnect_device(device_id: str):
             )
         
         # Check if device is connected
-        connection_info = websocket_routes.websocket_manager.get_connection_info(device_id)
+        connections = websocket_routes.websocket_manager.get_active_connections()
+        connection_info = connections.get(device_id)
+        
         if connection_info is None:
             return {
                 "device_id": device_id,
@@ -251,11 +231,7 @@ async def disconnect_device(device_id: str):
             }
         
         # Disconnect the device
-        from models.websocket import DisconnectionReason
-        await websocket_routes.websocket_manager.disconnect_device(
-            device_id, 
-            DisconnectionReason.SERVER_SHUTDOWN
-        )
+        await websocket_routes.websocket_manager.disconnect_device(device_id)
         
         websocket_routes.log_info(f"Device manually disconnected: {device_id}")
         
@@ -263,7 +239,7 @@ async def disconnect_device(device_id: str):
             "device_id": device_id,
             "message": "Device disconnected successfully",
             "action": "disconnected",
-            "session_duration": connection_info.get("session_duration", 0)
+            "session_duration": connection_info.get("duration", 0)
         }
         
     except HTTPException:
@@ -291,11 +267,11 @@ async def get_websocket_stats():
     - Error statistics
     """
     try:
-        connections = websocket_routes.websocket_manager.get_all_connections()
+        connections = websocket_routes.websocket_manager.get_active_connections()
         
         # Calculate statistics
         total_connections = len(connections)
-        total_session_time = sum(conn.get("session_duration", 0) for conn in connections.values())
+        total_session_time = sum(conn.get("duration", 0) for conn in connections.values())
         avg_session_duration = total_session_time / max(total_connections, 1)
         
         # Get unique seasons and episodes being accessed
