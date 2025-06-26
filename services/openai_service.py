@@ -1,377 +1,314 @@
 """
-OpenAI Realtime API service for handling audio conversations
+Fixed OpenAI Realtime API service - RACE CONDITION SAFE
 """
 import asyncio
 import json
 import base64
-from typing import Optional, Dict, Any, Callable
 import websockets
-from websockets.exceptions import ConnectionClosed, WebSocketException
-
-from config.settings import get_settings
-from models.websocket import OpenAIConnectionConfig, AudioMetadata
-from utils.exceptions import OpenAIConnectionException
-from utils.logger import LoggerMixin, log_openai_interaction
-
-
-class OpenAIService(LoggerMixin):
-    """Service for managing OpenAI Realtime API connections"""
-    
-    def __init__(self):
-        super().__init__()
-        self.settings = get_settings()
-        self.active_connections: Dict[str, 'OpenAIConnection'] = {}
-    
-    async def create_connection(self, device_id: str, system_prompt: str,
-                              audio_callback: Callable[[str, bytes], None],
-                              completion_callback: Callable[[str], None]) -> 'OpenAIConnection':
-        """
-        Create a new OpenAI connection for a device
-        
-        Args:
-            device_id: Unique device identifier
-            system_prompt: System prompt for the conversation
-            audio_callback: Callback function for audio data
-            completion_callback: Callback function for conversation completion
-            
-        Returns:
-            OpenAIConnection: Active connection object
-        """
-        if device_id in self.active_connections:
-            await self.close_connection(device_id)
-        
-        try:
-            connection = OpenAIConnection(
-                device_id=device_id,
-                system_prompt=system_prompt,
-                audio_callback=audio_callback,
-                completion_callback=completion_callback,
-                settings=self.settings
-            )
-            
-            await connection.connect()
-            self.active_connections[device_id] = connection
-            
-            log_openai_interaction(device_id, "connect", "success")
-            self.log_info(f"OpenAI connection created for device {device_id}")
-            
-            return connection
-            
-        except Exception as e:
-            log_openai_interaction(device_id, "connect", "failed", {"error": str(e)})
-            self.log_error(f"Failed to create OpenAI connection for {device_id}: {e}")
-            raise OpenAIConnectionException(device_id, "Failed to create connection", str(e))
-    
-    async def close_connection(self, device_id: str):
-        """
-        Close OpenAI connection for a device
-        
-        Args:
-            device_id: Unique device identifier
-        """
-        if device_id in self.active_connections:
-            connection = self.active_connections[device_id]
-            await connection.close()
-            del self.active_connections[device_id]
-            
-            log_openai_interaction(device_id, "disconnect", "success")
-            self.log_info(f"OpenAI connection closed for device {device_id}")
-    
-    async def send_audio(self, device_id: str, audio_data: bytes) -> bool:
-        """
-        Send audio data to OpenAI
-        
-        Args:
-            device_id: Unique device identifier
-            audio_data: Raw audio bytes
-            
-        Returns:
-            bool: True if sent successfully
-        """
-        if device_id not in self.active_connections:
-            return False
-        
-        connection = self.active_connections[device_id]
-        return await connection.send_audio(audio_data)
-    
-    def get_connection(self, device_id: str) -> Optional['OpenAIConnection']:
-        """Get active connection for device"""
-        return self.active_connections.get(device_id)
-    
-    async def close_all_connections(self):
-        """Close all active connections"""
-        for device_id in list(self.active_connections.keys()):
-            await self.close_connection(device_id)
+from typing import Optional, Callable
+from utils.logger import LoggerMixin
 
 
 class OpenAIConnection(LoggerMixin):
-    """Individual OpenAI Realtime API connection"""
+    """Fixed OpenAI Realtime API connection"""
     
-    def __init__(self, device_id: str, system_prompt: str,
-                 audio_callback: Callable[[str, bytes], None],
-                 completion_callback: Callable[[str], None],
-                 settings):
+    def __init__(self, device_id: str, system_prompt: str, api_key: str,
+                 audio_callback: Callable[[str, bytes], None]):
         super().__init__()
         self.device_id = device_id
         self.system_prompt = system_prompt
+        self.api_key = api_key
         self.audio_callback = audio_callback
-        self.completion_callback = completion_callback
-        self.settings = settings
         
-        self.websocket: Optional[websockets.WebSocketServerProtocol] = None
+        self.websocket: Optional[websockets.WebSocketClientProtocol] = None
         self.is_connected = False
-        self.is_listening = False
-        self.listen_task: Optional[asyncio.Task] = None
+        self.session_configured = False
         
-        # Connection configuration
-        self.config = OpenAIConnectionConfig(
-            model="gpt-4o-realtime-preview-2024-10-01",
-            voice=self.settings.openai_voice_model,
-            instructions=system_prompt
-        )
-    
     async def connect(self):
-        """Establish connection to OpenAI Realtime API"""
+        """Connect to OpenAI Realtime API"""
         try:
-            # Prepare headers
             headers = {
-                "Authorization": f"Bearer {self.settings.openai_api_key}",
+                "Authorization": f"Bearer {self.api_key}",
                 "OpenAI-Beta": "realtime=v1"
             }
             
-            # Connect to OpenAI
+            # Connect to OpenAI - FIXED: Use the correct URL with model parameter
             self.websocket = await websockets.connect(
-                self.settings.openai_realtime_url,
+                "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17",
                 extra_headers=headers,
-                ping_interval=30,
-                ping_timeout=10
+                ping_interval=30
             )
             
             self.is_connected = True
+            self.log_info(f"Connected to OpenAI for {self.device_id}")
             
-            # Send session configuration
-            await self._send_session_config()
-            
-            # Start listening for responses
-            self.listen_task = asyncio.create_task(self._listen_loop())
-            
-            self.log_info(f"Connected to OpenAI for device {self.device_id}")
+            # Start listening for messages
+            asyncio.create_task(self._listen_loop())
             
         except Exception as e:
             self.log_error(f"Failed to connect to OpenAI for {self.device_id}: {e}")
-            raise OpenAIConnectionException(self.device_id, "Connection failed", str(e))
-    
-    async def _send_session_config(self):
-        """Send session configuration to OpenAI"""
-        try:
-            config_message = self.config.to_openai_config()
-            await self.websocket.send(json.dumps(config_message))
-            
-            self.log_info(f"Session config sent for device {self.device_id}")
-            
-        except Exception as e:
-            self.log_error(f"Failed to send session config for {self.device_id}: {e}")
             raise
     
-    async def send_audio(self, audio_data: bytes) -> bool:
-        """
-        Send audio data to OpenAI
+    async def _listen_loop(self):
+        """Listen for messages from OpenAI"""
+        try:
+            async for message in self.websocket:
+                await self._handle_message(json.loads(message))
+        except Exception as e:
+            self.log_error(f"Listen loop error for {self.device_id}: {e}")
+    
+    async def _handle_message(self, data: dict):
+        """Handle messages from OpenAI"""
+        msg_type = data.get('type')
+        self.log_info(f"📨 OpenAI message for {self.device_id}: {msg_type}")
         
-        Args:
-            audio_data: Raw audio bytes
+        if msg_type == 'session.created':
+            self.log_info(f"🎉 Session created for {self.device_id}")
+            await self._configure_session()
+        
+        elif msg_type == 'session.updated':
+            self.session_configured = True
+            self.log_info(f"✅ Session configured for {self.device_id}")
+        
+        elif msg_type == 'input_audio_buffer.speech_started':
+            self.log_info(f"🎤 Speech started detected for {self.device_id}")
+        
+        elif msg_type == 'input_audio_buffer.speech_stopped':
+            self.log_info(f"🔇 Speech stopped detected for {self.device_id}")
+        
+        elif msg_type == 'response.created':
+            response_id = data.get('response', {}).get('id', 'unknown')
+            self.log_info(f"🤖 Response created for {self.device_id}: {response_id}")
+        
+        elif msg_type == 'response.output_item.added':
+            item = data.get('item', {})
+            item_type = item.get('type', 'unknown')
+            self.log_info(f"📝 Output item added for {self.device_id}: {item_type}")
             
-        Returns:
-            bool: True if sent successfully
-        """
-        if not self.is_connected or not self.websocket:
+            # Log if it's an audio item
+            if item_type == 'audio':
+                self.log_info(f"🎵 Audio output item created for {self.device_id}")
+        
+        elif msg_type == 'response.content_part.added':
+            part = data.get('part', {})
+            part_type = part.get('type', 'unknown')
+            self.log_info(f"📄 Content part added for {self.device_id}: {part_type}")
+        
+        elif msg_type == 'response.audio.delta':
+            # Forward audio to ESP32
+            audio_b64 = data.get('delta')
+            if audio_b64:
+                audio_data = base64.b64decode(audio_b64)
+                self.log_info(f"🔊 Received audio delta for {self.device_id}: {len(audio_data)} bytes")
+                self.audio_callback(self.device_id, audio_data)
+            else:
+                self.log_warning(f"⚠️ Empty audio delta for {self.device_id}")
+        
+        elif msg_type == 'response.audio.done':
+            self.log_info(f"🎵 Audio response completed for {self.device_id}")
+        
+        elif msg_type == 'response.done':
+            response_id = data.get('response', {}).get('id', 'unknown')
+            self.log_info(f"✅ Response completed for {self.device_id}: {response_id}")
+        
+        elif msg_type == 'error':
+            error = data.get('error', {})
+            error_message = error.get('message', 'Unknown error')
+            error_code = error.get('code', 'unknown')
+            self.log_error(f"❌ OpenAI error for {self.device_id}: {error_code} - {error_message}")
+        
+        # FIXED: Add handling for conversation item events
+        elif msg_type == 'conversation.item.created':
+            item = data.get('item', {})
+            self.log_info(f"💬 Conversation item created for {self.device_id}: {item.get('type', 'unknown')}")
+        
+        elif msg_type == 'conversation.item.input_audio_transcription.completed':
+            transcript = data.get('transcript', '')
+            self.log_info(f"📝 Transcription completed for {self.device_id}: {transcript[:50]}...")
+        
+        else:
+            self.log_info(f"🤔 Unhandled message type for {self.device_id}: {msg_type}")
+            # Log the full message for debugging unknown types
+            self.log_info(f"📋 Full message: {data}")
+    
+    async def _configure_session(self):
+        """Configure the OpenAI session - FIXED VERSION"""
+        config = {
+            "type": "session.update",
+            "session": {
+                # FIXED: Specify both text and audio modalities for speech-to-speech
+                "modalities": ["text", "audio"],
+                "instructions": self.system_prompt,
+                "voice": "ballad",
+                "input_audio_format": "pcm16",
+                "output_audio_format": "pcm16",
+                # FIXED: Enable input audio transcription to help with debugging
+                "input_audio_transcription": {
+                    "model": "whisper-1"
+                },
+                "turn_detection": {
+                    "type": "server_vad",
+                    "threshold": 0.5,
+                    "prefix_padding_ms": 300,
+                    "silence_duration_ms": 800  # Wait 800ms before responding
+                }
+            }
+        }
+        
+        await self.websocket.send(json.dumps(config))
+        self.log_info(f"✅ Session config sent for {self.device_id}")
+        self.log_info(f"📋 Config details: modalities={config['session']['modalities']}, voice={config['session']['voice']}")
+    
+    async def send_audio(self, audio_data: bytes) -> bool:
+        """Send audio data to OpenAI"""
+        if not self.is_connected or not self.session_configured:
+            self.log_warning(f"❌ Cannot send audio for {self.device_id}: connected={self.is_connected}, configured={self.session_configured}")
             return False
         
         try:
-            # Encode audio data
+            self.log_info(f"🎵 Encoding {len(audio_data)} bytes for OpenAI ({self.device_id})")
+            
+            # Encode to base64
             audio_b64 = base64.b64encode(audio_data).decode('utf-8')
             
-            # Create audio message
-            audio_message = {
+            # Send as input_audio_buffer.append
+            message = {
                 "type": "input_audio_buffer.append",
                 "audio": audio_b64
             }
             
-            await self.websocket.send(json.dumps(audio_message))
+            await self.websocket.send(json.dumps(message))
+            self.log_info(f"✅ Sent audio to OpenAI for {self.device_id}: {len(audio_data)} bytes")
             return True
             
         except Exception as e:
-            self.log_error(f"Failed to send audio for {self.device_id}: {e}")
-            log_openai_interaction(self.device_id, "send_audio", "failed", {"error": str(e)})
+            self.log_error(f"❌ Failed to send audio for {self.device_id}: {e}")
             return False
     
-    async def commit_audio(self):
-        """Commit the audio buffer for processing"""
-        if not self.is_connected or not self.websocket:
-            return
+    async def commit_audio_buffer(self):
+        """Manually commit the audio buffer to trigger response generation"""
+        if not self.is_connected or not self.session_configured:
+            return False
         
         try:
-            commit_message = {
+            message = {
                 "type": "input_audio_buffer.commit"
             }
-            await self.websocket.send(json.dumps(commit_message))
-            
+            await self.websocket.send(json.dumps(message))
+            self.log_info(f"🎯 Audio buffer committed for {self.device_id}")
+            return True
         except Exception as e:
-            self.log_error(f"Failed to commit audio for {self.device_id}: {e}")
+            self.log_error(f"❌ Failed to commit audio buffer for {self.device_id}: {e}")
+            return False
     
-    async def _listen_loop(self):
-        """Listen for messages from OpenAI"""
-        self.is_listening = True
+    async def create_response(self):
+        """Manually trigger response creation"""
+        if not self.is_connected or not self.session_configured:
+            return False
         
         try:
-            async for message in self.websocket:
-                if not self.is_listening:
-                    break
-                
-                await self._handle_openai_message(message)
-                
-        except ConnectionClosed:
-            self.log_info(f"OpenAI connection closed for device {self.device_id}")
+            message = {
+                "type": "response.create",
+                "response": {
+                    "modalities": ["text", "audio"],
+                    "instructions": "Please respond with both text and audio. Provide a helpful and engaging response.",
+                }
+            }
+            await self.websocket.send(json.dumps(message))
+            self.log_info(f"🚀 Response creation triggered for {self.device_id}")
+            return True
         except Exception as e:
-            self.log_error(f"Error in listen loop for {self.device_id}: {e}")
-            log_openai_interaction(self.device_id, "listen", "error", {"error": str(e)})
-        finally:
-            self.is_listening = False
-            self.is_connected = False
-    
-    async def _handle_openai_message(self, message: str):
-        """Handle incoming message from OpenAI"""
-        try:
-            data = json.loads(message)
-            message_type = data.get('type')
-            
-            if message_type == 'session.created':
-                await self._handle_session_created(data)
-            
-            elif message_type == 'response.audio.delta':
-                await self._handle_audio_delta(data)
-            
-            elif message_type == 'response.audio.done':
-                await self._handle_audio_done(data)
-            
-            elif message_type == 'response.done':
-                await self._handle_response_done(data)
-            
-            elif message_type == 'error':
-                await self._handle_error(data)
-            
-            elif message_type == 'input_audio_buffer.speech_started':
-                self.log_info(f"Speech started for device {self.device_id}")
-            
-            elif message_type == 'input_audio_buffer.speech_stopped':
-                self.log_info(f"Speech stopped for device {self.device_id}")
-                await self.commit_audio()
-            
-            else:
-                self.log_info(f"Unhandled message type: {message_type}")
-                
-        except json.JSONDecodeError as e:
-            self.log_error(f"Failed to parse OpenAI message for {self.device_id}: {e}")
-        except Exception as e:
-            self.log_error(f"Error handling OpenAI message for {self.device_id}: {e}")
-    
-    async def _handle_session_created(self, data: Dict[str, Any]):
-        """Handle session created event"""
-        session_info = data.get('session', {})
-        self.log_info(f"OpenAI session created for {self.device_id}", 
-                     extra={"session_id": session_info.get('id')})
-    
-    async def _handle_audio_delta(self, data: Dict[str, Any]):
-        """Handle incoming audio data"""
-        try:
-            audio_b64 = data.get('delta')
-            if audio_b64:
-                audio_data = base64.b64decode(audio_b64)
-                
-                # Call the audio callback
-                if self.audio_callback:
-                    self.audio_callback(self.device_id, audio_data)
-                
-        except Exception as e:
-            self.log_error(f"Error processing audio delta for {self.device_id}: {e}")
-    
-    async def _handle_audio_done(self, data: Dict[str, Any]):
-        """Handle audio completion"""
-        self.log_info(f"Audio response completed for device {self.device_id}")
-        log_openai_interaction(self.device_id, "audio_response", "completed")
-    
-    async def _handle_response_done(self, data: Dict[str, Any]):
-        """Handle response completion"""
-        response_info = data.get('response', {})
-        
-        self.log_info(f"Response completed for device {self.device_id}",
-                     extra={"response_id": response_info.get('id')})
-        
-        # Call completion callback
-        if self.completion_callback:
-            try:
-                self.completion_callback(self.device_id)
-            except Exception as e:
-                self.log_error(f"Error in completion callback for {self.device_id}: {e}")
-        
-        log_openai_interaction(self.device_id, "conversation", "completed")
-    
-    async def _handle_error(self, data: Dict[str, Any]):
-        """Handle error from OpenAI"""
-        error_info = data.get('error', {})
-        error_message = error_info.get('message', 'Unknown error')
-        error_code = error_info.get('code', 'unknown')
-        
-        self.log_error(f"OpenAI error for {self.device_id}: {error_message}",
-                      extra={"error_code": error_code, "error_data": error_info})
-        
-        log_openai_interaction(self.device_id, "error", "received", {
-            "error_code": error_code,
-            "error_message": error_message
-        })
+            self.log_error(f"❌ Failed to create response for {self.device_id}: {e}")
+            return False
     
     async def close(self):
-        """Close the OpenAI connection"""
-        try:
-            self.is_listening = False
-            self.is_connected = False
-            
-            # Cancel listen task
-            if self.listen_task and not self.listen_task.done():
-                self.listen_task.cancel()
-                try:
-                    await self.listen_task
-                except asyncio.CancelledError:
-                    pass
-            
-            # Close websocket
-            if self.websocket:
+        """Close the connection"""
+        self.is_connected = False
+        if self.websocket:
+            try:
                 await self.websocket.close()
-                self.websocket = None
-            
-            self.log_info(f"OpenAI connection closed for device {self.device_id}")
-            
-        except Exception as e:
-            self.log_error(f"Error closing OpenAI connection for {self.device_id}: {e}")
+            except Exception as e:
+                self.log_warning(f"⚠️ Error closing OpenAI websocket for {self.device_id}: {e}")
+
+
+class OpenAIService(LoggerMixin):
+    """Fixed OpenAI service - RACE CONDITION SAFE"""
     
-    @property
-    def connection_info(self) -> Dict[str, Any]:
-        """Get connection information"""
-        return {
-            "device_id": self.device_id,
-            "is_connected": self.is_connected,
-            "is_listening": self.is_listening,
-            "model": self.config.model,
-            "voice": self.config.voice
-        }
+    def __init__(self, api_key: str):
+        super().__init__()
+        self.api_key = api_key
+        self.active_connections = {}
+    
+    async def create_connection(self, device_id: str, system_prompt: str,
+                              audio_callback: Callable[[str, bytes], None]) -> OpenAIConnection:
+        """Create new OpenAI connection"""
+        # FIXED: Close existing connection safely
+        if device_id in self.active_connections:
+            await self.close_connection(device_id)
+        
+        connection = OpenAIConnection(
+            device_id=device_id,
+            system_prompt=system_prompt,
+            api_key=self.api_key,
+            audio_callback=audio_callback
+        )
+        
+        await connection.connect()
+        self.active_connections[device_id] = connection
+        return connection
+    
+    async def send_audio(self, device_id: str, audio_data: bytes) -> bool:
+        """Send audio to OpenAI"""
+        if device_id not in self.active_connections:
+            return False
+        return await self.active_connections[device_id].send_audio(audio_data)
+    
+    async def commit_audio_buffer(self, device_id: str) -> bool:
+        """Commit audio buffer for a device"""
+        if device_id not in self.active_connections:
+            return False
+        return await self.active_connections[device_id].commit_audio_buffer()
+    
+    async def create_response(self, device_id: str) -> bool:
+        """Trigger response creation for a device"""
+        if device_id not in self.active_connections:
+            return False
+        return await self.active_connections[device_id].create_response()
+    
+    async def close_connection(self, device_id: str):
+        """Close connection - FIXED to handle KeyError gracefully"""
+        if device_id in self.active_connections:
+            try:
+                await self.active_connections[device_id].close()
+                del self.active_connections[device_id]
+                self.log_info(f"✅ Closed OpenAI connection for {device_id}")
+            except KeyError:
+                # Connection was already removed by another call
+                self.log_warning(f"⚠️ OpenAI connection for {device_id} already removed")
+            except Exception as e:
+                self.log_error(f"❌ Error closing OpenAI connection for {device_id}: {e}")
+                # Still try to remove from active_connections
+                try:
+                    del self.active_connections[device_id]
+                except KeyError:
+                    pass
+    
+    async def close_all_connections(self):
+        """Close all connections"""
+        # Create a list of device_ids to avoid dictionary changed during iteration
+        device_ids = list(self.active_connections.keys())
+        for device_id in device_ids:
+            await self.close_connection(device_id)
 
 
-# Global OpenAI service instance
+# Global instance
 _openai_service: Optional[OpenAIService] = None
-
 
 def get_openai_service() -> OpenAIService:
     """Get OpenAI service singleton"""
     global _openai_service
     if _openai_service is None:
-        _openai_service = OpenAIService()
+        from config.settings import get_settings
+        settings = get_settings()
+        _openai_service = OpenAIService(settings.openai_api_key)
     return _openai_service

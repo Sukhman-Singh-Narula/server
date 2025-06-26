@@ -70,8 +70,8 @@ class ConnectionData(BaseModel):
 
 class OpenAIConnectionConfig(BaseModel):
     """Configuration for OpenAI connection"""
-    model: str = "gpt-4o-realtime-preview-2024-10-01"
-    voice: str = "alloy"
+    model: str = "gpt-4o-mini-realtime-preview-2024-10-01"
+    voice: str = "ballad"
     input_audio_format: str = "pcm16"
     output_audio_format: str = "pcm16"
     modalities: list[str] = Field(default_factory=lambda: ["text", "audio"])
