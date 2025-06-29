@@ -1,18 +1,23 @@
 """
-User service for handling user-related business logic
+Enhanced User service with daily episode limits and conversation tracking
 """
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, date
 
-from models.user import User, UserProgress, UserRegistrationRequest, UserResponse, SessionInfo
+from models.user import (
+    User, UserProgress, UserRegistrationRequest, UserResponse, 
+    SessionInfo, DailyUsage, DailyUsageStats
+)
 from services.firebase_service import get_firebase_service
-from utils.exceptions import UserAlreadyExistsException, UserNotFoundException, ValidationException
+from utils.exceptions import (
+    UserAlreadyExistsException, UserNotFoundException, ValidationException
+)
 from utils.validators import UserValidator, DeviceValidator
 from utils.logger import LoggerMixin, log_user_registration
 
 
 class UserService(LoggerMixin):
-    """Service for user-related operations"""
+    """Enhanced service for user-related operations with daily limits"""
     
     def __init__(self):
         super().__init__()
@@ -69,13 +74,13 @@ class UserService(LoggerMixin):
     
     async def get_user(self, device_id: str) -> UserResponse:
         """
-        Get user information
+        Get user information with current daily usage
         
         Args:
             device_id: Unique device identifier
             
         Returns:
-            UserResponse: User information
+            UserResponse: User information with daily limits
             
         Raises:
             ValidationException: If device ID is invalid
@@ -88,7 +93,97 @@ class UserService(LoggerMixin):
         
         # Get user from Firebase
         user = await self.firebase_service.get_user(device_id)
+        
+        # Update daily usage to ensure it's current
+        user.progress.update_daily_usage()
+        
+        # Save updated daily usage if it changed
+        await self.firebase_service.update_user_progress(device_id, user.progress)
+        
         return UserResponse.from_user(user)
+    
+    async def check_episode_limit(self, device_id: str) -> Dict[str, Any]:
+        """
+        Check if user can play another episode today
+        
+        Args:
+            device_id: Unique device identifier
+            
+        Returns:
+            Dict with limit information
+        """
+        user = await self.firebase_service.get_user(device_id)
+        user.progress.update_daily_usage()
+        
+        daily_usage = user.progress.daily_usage
+        
+        return {
+            "device_id": device_id,
+            "date": daily_usage.date,
+            "episodes_played_today": daily_usage.episodes_played,
+            "remaining_episodes": daily_usage.remaining_episodes,
+            "can_play_episode": daily_usage.can_play_episode,
+            "daily_limit": 3,
+            "last_episode_time": daily_usage.last_episode_time,
+            "total_session_time_today": round(daily_usage.total_session_time / 60, 2)  # minutes
+        }
+    
+    async def advance_episode(self, device_id: str) -> UserResponse:
+        """
+        Advance user to next episode/season with daily limit check
+        
+        Args:
+            device_id: Unique device identifier
+            
+        Returns:
+            UserResponse: Updated user information
+            
+        Raises:
+            ValidationException: If daily limit exceeded or other validation fails
+        """
+        from config.settings import get_settings
+        settings = get_settings()
+        
+        # Get current user
+        user = await self.firebase_service.get_user(device_id)
+        
+        # Check daily limit
+        can_advance, message = user.progress.can_advance_episode()
+        if not can_advance:
+            self.log_warning(f"Episode advance blocked for {device_id}: {message}")
+            raise ValidationException(message, "daily_limit", user.progress.daily_usage.episodes_played)
+        
+        # Store old progress for logging
+        old_progress = user.progress.dict()
+        
+        try:
+            # Advance episode (this will also update daily usage)
+            success, advanced_to_new_season = user.progress.advance_episode(settings.episodes_per_season)
+            
+            if not success:
+                raise ValidationException("Failed to advance episode")
+            
+            # Update in Firebase
+            updated_user = await self.firebase_service.update_user_progress(device_id, user.progress)
+            
+            # Log progress update
+            from utils.logger import log_user_progress
+            log_user_progress(device_id, old_progress, user.progress.dict())
+            
+            # Log daily limit usage
+            self.log_info(f"Episode advanced for {device_id} - Season {user.progress.season}, Episode {user.progress.episode}. Daily usage: {user.progress.daily_usage.episodes_played}/3")
+            
+            if advanced_to_new_season:
+                self.log_info(f"User {device_id} advanced to new season: {user.progress.season}")
+            
+            return UserResponse.from_user(updated_user)
+            
+        except ValueError as e:
+            # This should be caught by the can_advance_episode check, but just in case
+            raise ValidationException(str(e), "daily_limit")
+        except Exception as e:
+            self.log_error(f"Failed to advance episode for {device_id}: {e}")
+            raise ValidationException(f"Failed to advance episode: {str(e)}")
     
     async def update_user_progress(self, device_id: str, words_learnt: List[str] = None,
                                  topics_learnt: List[str] = None) -> UserResponse:
@@ -112,12 +207,17 @@ class UserService(LoggerMixin):
             existing_words = set(user.progress.words_learnt)
             new_words = [word for word in words_learnt if word not in existing_words]
             user.progress.words_learnt.extend(new_words)
+            self.log_info(f"Added {len(new_words)} new words for {device_id}")
         
         if topics_learnt:
             # Add new topics (avoid duplicates)
             existing_topics = set(user.progress.topics_learnt)
             new_topics = [topic for topic in topics_learnt if topic not in existing_topics]
             user.progress.topics_learnt.extend(new_topics)
+            self.log_info(f"Added {len(new_topics)} new topics for {device_id}")
+        
+        # Update daily usage
+        user.progress.update_daily_usage()
         
         # Update in Firebase
         updated_user = await self.firebase_service.update_user_progress(device_id, user.progress)
@@ -125,43 +225,30 @@ class UserService(LoggerMixin):
         self.log_info(f"Progress updated for user {device_id}")
         return UserResponse.from_user(updated_user)
     
-    async def advance_episode(self, device_id: str) -> UserResponse:
+    async def add_session_time(self, device_id: str, session_duration: float):
         """
-        Advance user to next episode/season
+        Add session time to user's daily usage
         
         Args:
             device_id: Unique device identifier
-            
-        Returns:
-            UserResponse: Updated user information
+            session_duration: Session duration in seconds
         """
-        from config.settings import get_settings
-        settings = get_settings()
-        
-        # Get current user
-        user = await self.firebase_service.get_user(device_id)
-        
-        # Store old progress for logging
-        old_progress = user.progress.dict()
-        
-        # Advance episode
-        advanced_to_new_season = user.progress.advance_episode(settings.episodes_per_season)
-        
-        # Update in Firebase
-        updated_user = await self.firebase_service.update_user_progress(device_id, user.progress)
-        
-        # Log progress update
-        from utils.logger import log_user_progress
-        log_user_progress(device_id, old_progress, user.progress.dict())
-        
-        self.log_info(f"Episode advanced for user {device_id} - Season {user.progress.season}, Episode {user.progress.episode}")
-        
-        return UserResponse.from_user(updated_user)
+        try:
+            user = await self.firebase_service.get_user(device_id)
+            user.progress.add_session_time(session_duration)
+            
+            # Update in Firebase
+            await self.firebase_service.update_user_progress(device_id, user.progress)
+            
+            self.log_info(f"Added {session_duration:.1f}s session time for {device_id}. Daily total: {user.progress.daily_usage.total_session_time:.1f}s")
+            
+        except Exception as e:
+            self.log_error(f"Failed to add session time for {device_id}: {e}")
     
     async def get_user_session_info(self, device_id: str, session_duration: float = 0.0,
                                   is_connected: bool = False, is_openai_connected: bool = False) -> SessionInfo:
         """
-        Get current session information for user
+        Get current session information for user with daily limits
         
         Args:
             device_id: Unique device identifier
@@ -170,10 +257,11 @@ class UserService(LoggerMixin):
             is_openai_connected: Whether OpenAI connection is active
             
         Returns:
-            SessionInfo: Current session information
+            SessionInfo: Current session information with daily limits
         """
         # Get user data
         user = await self.firebase_service.get_user(device_id)
+        user.progress.update_daily_usage()
         
         return SessionInfo(
             device_id=device_id,
@@ -182,20 +270,58 @@ class UserService(LoggerMixin):
             current_episode=user.progress.episode,
             is_connected=is_connected,
             is_openai_connected=is_openai_connected,
-            session_start_time=datetime.now()  # This would be tracked by connection manager
+            session_start_time=datetime.now(),  # This would be tracked by connection manager
+            
+            # Daily limits info
+            episodes_played_today=user.progress.daily_usage.episodes_played,
+            remaining_episodes_today=user.progress.daily_usage.remaining_episodes,
+            can_play_episode=user.progress.daily_usage.can_play_episode
         )
+    
+    async def get_daily_usage_stats(self, device_id: str, days: int = 7) -> List[DailyUsageStats]:
+        """
+        Get daily usage statistics for the past N days
+        
+        Args:
+            device_id: Unique device identifier
+            days: Number of past days to include
+            
+        Returns:
+            List[DailyUsageStats]: Daily usage statistics
+        """
+        user = await self.firebase_service.get_user(device_id)
+        user.progress.update_daily_usage()
+        
+        stats = []
+        
+        # Add current day
+        stats.append(DailyUsageStats.from_daily_usage(user.progress.daily_usage))
+        
+        # Add historical days (up to requested number)
+        for usage in reversed(user.progress.usage_history[-days+1:]):
+            stats.insert(0, DailyUsageStats.from_daily_usage(usage))
+        
+        return stats[-days:]  # Ensure we only return requested number of days
     
     async def get_user_statistics(self, device_id: str) -> Dict[str, Any]:
         """
-        Get comprehensive user statistics
+        Get comprehensive user statistics with daily usage
         
         Args:
             device_id: Unique device identifier
             
         Returns:
-            Dict[str, Any]: User statistics
+            Dict[str, Any]: User statistics including daily limits
         """
         user = await self.firebase_service.get_user(device_id)
+        user.progress.update_daily_usage()
+        
+        # Calculate weekly and monthly totals
+        weekly_episodes = sum(usage.episodes_played for usage in user.progress.usage_history[-7:])
+        weekly_episodes += user.progress.daily_usage.episodes_played
+        
+        monthly_episodes = sum(usage.episodes_played for usage in user.progress.usage_history[-30:])
+        monthly_episodes += user.progress.daily_usage.episodes_played
         
         return {
             "user_info": {
@@ -221,6 +347,18 @@ class UserService(LoggerMixin):
                 "average_session_time": self._calculate_average_session_time(user),
                 "last_completed_episode": user.last_completed_episode.isoformat() if user.last_completed_episode else None
             },
+            "daily_usage": {
+                "today": {
+                    "episodes_played": user.progress.daily_usage.episodes_played,
+                    "remaining_episodes": user.progress.daily_usage.remaining_episodes,
+                    "session_time_minutes": round(user.progress.daily_usage.total_session_time / 60, 2),
+                    "sessions_count": user.progress.daily_usage.sessions_count,
+                    "can_play_episode": user.progress.daily_usage.can_play_episode
+                },
+                "weekly_episodes": weekly_episodes,
+                "monthly_episodes": monthly_episodes,
+                "daily_limit": 3
+            },
             "completion_stats": {
                 "completion_rate": self._calculate_completion_rate(user),
                 "episodes_remaining_in_season": 7 - user.progress.episode,
@@ -230,9 +368,15 @@ class UserService(LoggerMixin):
     
     def _calculate_average_session_time(self, user: User) -> float:
         """Calculate average session time for user"""
-        if user.progress.episodes_completed == 0:
+        total_sessions = user.progress.daily_usage.sessions_count
+        for usage in user.progress.usage_history:
+            total_sessions += usage.sessions_count
+        
+        if total_sessions == 0:
             return 0.0
-        return user.progress.total_time / user.progress.episodes_completed
+        
+        total_time = user.progress.total_time
+        return total_time / total_sessions
     
     def _calculate_completion_rate(self, user: User) -> float:
         """Calculate learning completion rate as percentage"""
@@ -258,25 +402,6 @@ class UserService(LoggerMixin):
             return f"{int(estimated_seconds / 60)} minutes"
         else:
             return f"{estimated_hours:.1f} hours"
-    
-    async def search_users(self, name_query: str = None, min_age: int = None, 
-                         max_age: int = None, season: int = None) -> List[UserResponse]:
-        """
-        Search users based on criteria (Note: This would require Firestore queries)
-        
-        Args:
-            name_query: Partial name to search for
-            min_age: Minimum age filter
-            max_age: Maximum age filter
-            season: Current season filter
-            
-        Returns:
-            List[UserResponse]: Matching users
-        """
-        # Note: This is a simplified implementation
-        # In a real application, you'd implement proper Firestore queries
-        self.log_info("Search functionality would require Firestore collection queries")
-        return []
     
     async def delete_user(self, device_id: str) -> bool:
         """

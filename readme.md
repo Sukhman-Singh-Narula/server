@@ -1,357 +1,312 @@
-# ESP32 Audio Streaming Server
-
-A comprehensive, modular FastAPI server for managing ESP32 device connections with OpenAI Realtime API integration. This server handles real-time audio streaming, user management, learning progression, and system prompt management with robust security and monitoring features.
-
-## 🎯 Features
-
-### Core Functionality
-- **🔐 Secure Device Authentication**: Device ID validation (ABCD1234 format)
-- **🎵 Real-time Audio Streaming**: WebSocket connections for ESP32 ↔ OpenAI audio streaming
-- **👥 User Management**: Registration, progress tracking, and session management
-- **📚 Learning System**: Season/episode progression with customizable system prompts
-- **🔥 Firebase Integration**: User data and prompt storage with Firestore
-- **🛡️ Security Middleware**: Rate limiting, IP blocking, and request validation
-- **📊 Monitoring**: Comprehensive logging and metrics collection
-
-### Architecture Benefits
-- **🏗️ Modular Design**: Clean separation of concerns for easy maintenance
-- **🔄 Scalable**: Async/await throughout for high performance
-- **🧪 Testable**: Dependency injection and service pattern
-- **📝 Well-Documented**: Comprehensive API documentation and logging
-- **🔒 Production-Ready**: Security middleware and error handling
-
-## 📁 Project Structure
-
-```
-esp32_audio_server/
-├── main.py                     # FastAPI app initialization
-├── requirements.txt            # Dependencies
-├── .env.example               # Environment variables template
-├── README.md                  # This file
-├── config/
-│   ├── __init__.py
-│   └── settings.py            # Configuration management
-├── models/
-│   ├── __init__.py
-│   ├── user.py                # User data models
-│   ├── system_prompt.py       # System prompt models
-│   └── websocket.py           # WebSocket message models
-├── services/
-│   ├── __init__.py
-│   ├── firebase_service.py    # Firebase operations
-│   ├── openai_service.py      # OpenAI Realtime API
-│   ├── websocket_service.py   # WebSocket management
-│   ├── user_service.py        # User business logic
-│   └── prompt_service.py      # System prompt logic
-├── routes/
-│   ├── __init__.py
-│   ├── auth.py                # User registration
-│   ├── users.py               # User management
-│   ├── prompts.py             # System prompt management
-│   └── websocket.py           # WebSocket endpoints
-├── utils/
-│   ├── __init__.py
-│   ├── validators.py          # Validation functions
-│   ├── logger.py              # Logging configuration
-│   ├── security.py            # Security utilities
-│   └── exceptions.py          # Custom exceptions
-├── middleware/
-│   ├── __init__.py
-│   ├── security.py            # Security middleware
-│   └── logging.py             # Request logging
-└── tests/
-    ├── __init__.py
-    ├── test_routes.py
-    ├── test_services.py
-    └── test_utils.py
-```
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- Python 3.8+
-- Firebase project with Firestore enabled
-- OpenAI API key with Realtime API access
-
-### Installation
-
-1. **Clone and setup the project:**
-```bash
-git clone <repository-url>
-cd esp32_audio_server
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-2. **Configure Firebase:**
-   - Create a Firebase project at [console.firebase.google.com](https://console.firebase.google.com/)
-   - Enable Firestore Database
-   - Generate a service account key:
-     - Go to Project Settings → Service Accounts
-     - Click "Generate new private key"
-     - Save the JSON file securely
-
-3. **Setup environment variables:**
-```bash
-cp .env.example .env
-# Edit .env with your configuration
-```
-
-4. **Required environment variables:**
-```bash
-# Firebase
-FIREBASE_CREDENTIALS_PATH="path/to/your/serviceAccountKey.json"
-
-# OpenAI
-OPENAI_API_KEY="sk-your-openai-api-key-here"
-
-# Server
-HOST="0.0.0.0"
-PORT=8000
-```
-
-5. **Run the server:**
-```bash
-python main.py
-```
-
-The server will be available at:
-- **API Documentation**: http://localhost:8000/docs
-- **Health Check**: http://localhost:8000/health
-- **WebSocket**: ws://localhost:8000/ws/{device_id}
-
-## 📋 API Endpoints
-
-### Authentication
-- `POST /auth/register` - Register a new user
-- `GET /auth/verify/{device_id}` - Verify device registration
-- `POST /auth/validate-device-id` - Validate device ID format
-
-### User Management
-- `GET /users/{device_id}` - Get user information
-- `GET /users/{device_id}/statistics` - Get user statistics
-- `GET /users/{device_id}/session` - Get session information
-- `GET /users/{device_id}/session-duration` - Get session duration
-- `PUT /users/{device_id}/progress` - Update learning progress
-- `POST /users/{device_id}/advance-episode` - Advance to next episode
-- `DELETE /users/{device_id}` - Deactivate user account
-
-### System Prompts
-- `POST /prompts/` - Create system prompt
-- `GET /prompts/{season}/{episode}` - Get specific prompt
-- `GET /prompts/{season}` - Get season overview
-- `GET /prompts/` - Get all seasons overview
-- `POST /prompts/validate` - Validate prompt content
-- `PUT /prompts/{season}/{episode}/metadata` - Update prompt metadata
-- `DELETE /prompts/{season}/{episode}` - Deactivate prompt
-
-### WebSocket
-- `WS /ws/{device_id}` - ESP32 device connection
-- `GET /ws/connections` - Get active connections
-- `GET /ws/connection/{device_id}` - Get specific connection info
-- `POST /ws/disconnect/{device_id}` - Manually disconnect device
-
-### System
-- `GET /` - Server status
-- `GET /health` - Health check
-- `GET /metrics` - Application metrics
-
-## 🔧 ESP32 Integration
-
-### Device ID Format
-Device IDs must follow the format: **4 uppercase letters + 4 digits** (e.g., `ABCD1234`)
-
-### WebSocket Connection Flow
-1. ESP32 connects to `ws://server:8000/ws/ABCD1234`
-2. Server validates device ID and user registration
-3. Server retrieves current episode system prompt
-4. Server establishes OpenAI Realtime API connection
-5. Audio streaming begins (ESP32 ↔ Server ↔ OpenAI)
-6. Episode completion triggers automatic progression
-
-
-
-## 🛡️ Security Features
-
-### Device Authentication
-- Device ID format validation
-- User registration requirement
-- Session management and timeouts
-
-### Rate Limiting
-- Configurable request limits per IP
-- Automatic IP blocking for violations
-- Graduated penalty system
-
-### Input Validation
-- SQL injection prevention
-- XSS protection
-- File upload validation
-- Request size limits
-
-### Security Headers
-- CORS configuration
-- Content Security Policy
-- XSS protection headers
-- Frame options
-
-## 📊 Monitoring & Logging
-
-### Structured Logging
-- JSON-formatted logs
-- Multiple log levels and files
-- Request/response logging
-- Security event logging
-
-### Metrics Collection
-- Request counts and response times
-- Error rates and status codes
-- Active connection tracking
-- Performance monitoring
-
-### Health Checks
-- Service dependency monitoring
-- Database connection health
-- WebSocket service status
-- OpenAI API connectivity
-
-## 🏗️ Development
-
-### Running Tests
-```bash
-pytest tests/ -v --cov=.
-```
-
-### Code Formatting
-```bash
-black .
-isort .
-flake8 .
-```
-
-### Type Checking
-```bash
-mypy .
-```
-
-### Development Server
-```bash
-# Auto-reload on changes
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
-
-## 🚀 Production Deployment
-
-### Environment Setup
-1. Set `DEBUG=False` in environment
-2. Use production-grade WSGI server:
-```bash
-gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker
-```
-
-3. Configure reverse proxy (nginx):
-```nginx
-server {
-    listen 80;
-    server_name your-domain.com;
-    
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-### Database Considerations
-- Use Firestore in production mode
-- Set up proper backup strategies
-- Monitor Firestore usage and costs
-- Consider read/write optimizations
-
-### Security Checklist
-- [ ] Use HTTPS in production
-- [ ] Update CORS origins to specific domains
-- [ ] Rotate API keys regularly
-- [ ] Set up monitoring and alerting
-- [ ] Configure proper Firebase security rules
-- [ ] Use environment-specific configuration
-
-## 🔧 Configuration
-
-### Environment Variables
-All configuration is managed through environment variables. See `.env.example` for complete list.
-
-### Key Settings
-- `EPISODES_PER_SEASON`: Number of episodes per season (default: 7)
-- `MAX_SEASONS`: Maximum number of seasons (default: 10)
-- `SESSION_TIMEOUT_MINUTES`: WebSocket session timeout (default: 30)
-- `RATE_LIMIT_REQUESTS`: Requests per time window (default: 100)
-- `RATE_LIMIT_WINDOW_SECONDS`: Rate limit window (default: 60)
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**1. Firebase Connection Failed**
-- Verify service account key path
-- Check Firebase project permissions
-- Ensure Firestore is enabled
-
-**2. OpenAI Connection Failed**
-- Verify API key is correct
-- Check Realtime API access
-- Monitor OpenAI usage limits
-
-**3. WebSocket Connection Rejected**
-- Verify device ID format (ABCD1234)
-- Check user registration
-- Ensure system prompts exist
-
-**4. High Memory Usage**
-- Monitor active connections
-- Check log file sizes
-- Review metrics collection
-
-### Debug Mode
-Enable debug mode for detailed error messages:
-```bash
-DEBUG=True python main.py
-```
-
-### Logs Location
-- Main logs: `logs/esp32_server.log`
-- Request logs: `logs/requests.log`
-- Security logs: `logs/security.log`
-- Audio session logs: `logs/audio_sessions.log`
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature-name`
-3. Make your changes with tests
-4. Format code: `black . && isort .`
-5. Run tests: `pytest`
-6. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 📞 Support
-
-For issues, questions, or contributions:
-- Create an issue on GitHub
-- Review the API documentation at `/docs`
-- Check logs for detailed error information
+# Enhanced ESP32 Audio Streaming Server - Complete Endpoint Summary
+
+## 🏠 System Endpoints
+
+### `GET /`
+**Purpose**: Server status and feature overview  
+**Returns**: Server information, version, available features, and endpoint listings  
+**New**: Now includes enhanced features like daily limits and conversation tracking
+
+### `GET /health`
+**Purpose**: Comprehensive health check for all services  
+**Returns**: Health status of Firebase, WebSocket, OpenAI, User Service, and Conversation Service  
+**New**: Enhanced to include conversation service health monitoring
+
+### `GET /metrics`
+**Purpose**: Application performance metrics  
+**Returns**: Request metrics, enhanced features status, service metrics, and active connection counts  
+**New**: Includes conversation tracking and daily limits metrics
+
+### `GET /features`
+**Purpose**: Detailed information about enhanced features  
+**Returns**: Complete feature documentation, endpoints, and usage workflows  
+**New**: Documents daily limits and conversation transcription capabilities
 
 ---
 
-**Happy coding! 🚀**
+## 🔐 Authentication Endpoints (`/auth`)
+
+### `POST /auth/register`
+**Purpose**: Register a new ESP32 device user  
+**Input**: Device ID (ABCD1234 format), name, age  
+**Returns**: User profile with initial daily usage tracking  
+**Enhanced**: Now includes daily usage initialization
+
+### `GET /auth/verify/{device_id}`
+**Purpose**: Verify if device is registered  
+**Returns**: Registration status, basic user info, current season/episode  
+**Use Case**: Quick device validation without full user data
+
+### `POST /auth/validate-device-id`
+**Purpose**: Validate device ID format without checking registration  
+**Input**: Device ID string  
+**Returns**: Format validation result and requirements  
+**Use Case**: Client-side validation before registration
+
+### `GET /auth/registration-stats`
+**Purpose**: Admin endpoint for registration statistics  
+**Returns**: Placeholder for admin statistics  
+**Note**: Requires admin authentication in production
+
+---
+
+## 👥 Enhanced User Management (`/users`)
+
+### Core User Information
+
+#### `GET /users/{device_id}`
+**Purpose**: Get comprehensive user information  
+**Returns**: User profile, learning progress, **daily usage statistics**  
+**Enhanced**: Now includes episodes played today, remaining episodes, daily limits status
+
+#### `GET /users/{device_id}/statistics`
+**Purpose**: Comprehensive user statistics with daily usage  
+**Returns**: Learning progress, time statistics, **daily/weekly/monthly usage patterns**  
+**Enhanced**: Includes daily limits analysis and usage efficiency metrics
+
+### Daily Limits Management (🆕 NEW)
+
+#### `GET /users/{device_id}/daily-limits`
+**Purpose**: Check current daily episode limits  
+**Returns**: Episodes played today, remaining episodes, can play status, daily limit (3)  
+**Use Case**: ESP32 client checks before starting episode
+
+#### `GET /users/{device_id}/daily-usage`
+**Purpose**: Get daily usage statistics for past N days  
+**Input**: `days` parameter (1-30, default: 7)  
+**Returns**: Daily episode counts, session times, efficiency scores  
+**Use Case**: Analytics and usage pattern analysis
+
+### Session Management
+
+#### `GET /users/{device_id}/session`
+**Purpose**: Get current session information with daily limits  
+**Returns**: Connection status, duration, current position, **daily limits info**  
+**Enhanced**: Now includes remaining episodes for the day
+
+#### `GET /users/{device_id}/session-duration`
+**Purpose**: Get current session duration  
+**Returns**: Session duration in seconds and minutes, connection status
+
+### Progress Management
+
+#### `PUT /users/{device_id}/progress`
+**Purpose**: Update learning progress (words/topics learned)  
+**Input**: New words and topics lists  
+**Returns**: Updated user profile  
+**Note**: Does not affect daily limits or episode advancement
+
+#### `POST /users/{device_id}/advance-episode`
+**Purpose**: Manually advance to next episode (respects daily limits)  
+**Returns**: Updated user profile or daily limit exceeded error (HTTP 429)  
+**Enhanced**: **Enforces 3-episode daily limit**, automatic daily usage tracking
+
+### User Management
+
+#### `DELETE /users/{device_id}`
+**Purpose**: Soft delete user account  
+**Returns**: Deletion confirmation  
+**Note**: Preserves conversation history and daily usage data
+
+#### `GET /users/`
+**Purpose**: Get all active connections (admin endpoint)  
+**Returns**: Active connections with daily usage context
+
+#### `GET /users/admin/daily-usage-summary`
+**Purpose**: Admin endpoint for daily usage across all users  
+**Returns**: Aggregated daily usage statistics  
+**Note**: Requires admin authentication in production
+
+---
+
+## 📚 System Prompts (`/prompts`)
+
+### Core Prompt Management
+
+#### `POST /prompts/`
+**Purpose**: Create or update system prompt  
+**Input**: Season, episode, prompt content, type, metadata  
+**Returns**: Created prompt information with version tracking
+
+#### `GET /prompts/{season}/{episode}`
+**Purpose**: Get system prompt metadata  
+**Returns**: Prompt information without content (for listings)
+
+#### `GET /prompts/{season}/{episode}/content`
+**Purpose**: Get raw prompt content for OpenAI integration  
+**Returns**: Full prompt text and character count  
+**Use Case**: Internal server use for OpenAI connections
+
+### Prompt Organization
+
+#### `GET /prompts/{season}`
+**Purpose**: Get overview of all episodes in a season  
+**Returns**: Season completion statistics, available prompt types
+
+#### `GET /prompts/`
+**Purpose**: Get overview of all seasons  
+**Returns**: Complete learning system overview with completion stats
+
+### Prompt Utilities
+
+#### `POST /prompts/validate`
+**Purpose**: Validate prompt content and get improvement suggestions  
+**Input**: Prompt text  
+**Returns**: Validation results, errors, warnings, suggestions
+
+#### `PUT /prompts/{season}/{episode}/metadata`
+**Purpose**: Update prompt metadata without changing content  
+**Input**: New metadata object  
+**Returns**: Updated prompt information
+
+#### `DELETE /prompts/{season}/{episode}`
+**Purpose**: Deactivate prompt (soft delete)  
+**Returns**: Deactivation confirmation
+
+### Advanced Prompt Features
+
+#### `POST /prompts/search`
+**Purpose**: Search prompts by content, type, or season  
+**Input**: Search criteria  
+**Returns**: Matching prompts
+
+#### `GET /prompts/{season}/{episode}/analytics`
+**Purpose**: Get detailed analytics for specific prompt  
+**Returns**: Usage statistics, content analysis, validation results
+
+#### `GET /prompts/types`
+**Purpose**: Get available prompt types  
+**Returns**: List of supported prompt types with descriptions
+
+---
+
+## 🔌 WebSocket Connection (`/ws`)
+
+### Core Connection
+
+#### `WS /ws/{device_id}`
+**Purpose**: ESP32 device real-time connection  
+**Features**: 
+- **Daily episode limit checking before connection**
+- **Real-time conversation session tracking**
+- Audio streaming (ESP32 ↔ OpenAI)
+- Session management with automatic episode advancement
+- **Daily usage time tracking**
+
+### Connection Management
+
+#### `GET /ws/connections`
+**Purpose**: Get all active WebSocket connections  
+**Returns**: Connection details with **conversation session info**  
+**Enhanced**: Includes active conversation metadata
+
+#### `GET /ws/connection/{device_id}`
+**Purpose**: Get specific device connection information  
+**Returns**: Connection status, duration, **conversation details**
+
+#### `POST /ws/disconnect/{device_id}`
+**Purpose**: Manually disconnect specific device  
+**Returns**: Disconnection confirmation and session duration
+
+#### `GET /ws/stats`
+**Purpose**: WebSocket service statistics  
+**Returns**: Connection metrics, **learning statistics**, active episodes
+
+#### `GET /ws/health`
+**Purpose**: WebSocket service health check  
+**Returns**: Service dependencies health status
+
+---
+
+## 💬 Conversation Management (`/conversations`) - 🆕 NEW
+
+### Core Conversation Access
+
+#### `GET /conversations/{device_id}`
+**Purpose**: Get user's conversation sessions list  
+**Input**: `limit` parameter (1-500, default: 50)  
+**Returns**: List of conversation summaries with metadata  
+**Use Case**: Browse conversation history
+
+#### `GET /conversations/{device_id}/session/{session_id}`
+**Purpose**: Get complete conversation transcript  
+**Returns**: Full session with all messages, timestamps, metadata  
+**Use Case**: View detailed conversation history
+
+#### `GET /conversations/{device_id}/active`
+**Purpose**: Get currently active conversation session  
+**Returns**: Real-time conversation stats, recent messages  
+**Use Case**: Monitor ongoing conversation
+
+### Conversation Search & Analytics
+
+#### `POST /conversations/{device_id}/search`
+**Purpose**: Search through conversation history  
+**Input**: Search criteria (text, dates, message types, season/episode)  
+**Returns**: Matching conversation sessions  
+**Use Case**: Find specific conversations or topics
+
+#### `GET /conversations/{device_id}/analytics`
+**Purpose**: Comprehensive conversation analytics  
+**Input**: `days` parameter (1-365, default: 30)  
+**Returns**: Session counts, completion rates, message patterns, daily activity  
+**Use Case**: Usage insights and learning progress analysis
+
+#### `GET /conversations/{device_id}/season/{season}/episode/{episode}`
+**Purpose**: Get all conversations for specific episode  
+**Returns**: All conversation sessions for that episode  
+**Use Case**: Episode-specific conversation review
+
+### Conversation Export
+
+#### `POST /conversations/{device_id}/export`
+**Purpose**: Export conversation transcripts in multiple formats  
+**Input**: Export configuration (format, filters, options)  
+**Returns**: Exported data in JSON/CSV/TXT format  
+**Formats**:
+- **JSON**: Complete structured data with metadata
+- **CSV**: Tabular format for analysis (downloadable file)
+- **TXT**: Human-readable transcript (downloadable file)
+
+### Admin Conversation Features
+
+#### `GET /conversations/admin/stats`
+**Purpose**: Global conversation statistics (admin)  
+**Returns**: System-wide conversation metrics  
+**Note**: Requires admin authentication
+
+#### `DELETE /conversations/{device_id}/session/{session_id}`
+**Purpose**: Delete specific conversation session  
+**Returns**: Deletion confirmation  
+**Note**: Soft delete with audit trail
+
+---
+
+## 🔄 Enhanced Workflow Integration
+
+### Daily Limits Workflow
+1. **Connection Check**: `WS /ws/{device_id}` validates daily limits before allowing connection
+2. **Limit Monitoring**: `GET /users/{device_id}/daily-limits` shows current status
+3. **Episode Advancement**: `POST /users/{device_id}/advance-episode` respects limits
+4. **Usage Tracking**: All endpoints automatically track daily usage
+
+### Conversation Tracking Workflow
+1. **Session Start**: WebSocket connection automatically starts conversation session
+2. **Real-time Capture**: All AI and user messages captured with timestamps
+3. **Session End**: Conversation saved when WebSocket disconnects
+4. **Analysis & Export**: Full conversation history available for analysis
+
+### Key Integration Points
+- **WebSocket ↔ Daily Limits**: Connection rejected if daily limit exceeded
+- **WebSocket ↔ Conversations**: Automatic session tracking during connections
+- **OpenAI ↔ Conversations**: Real-time transcription capture from OpenAI API
+- **User Progress ↔ Daily Limits**: Episode advancement updates daily usage
+- **Firebase**: All data (users, conversations, prompts) stored with enhanced schemas
+
+### Error Handling
+- **Daily Limit Exceeded**: HTTP 429 with retry information
+- **Invalid Device ID**: HTTP 400 with format requirements
+- **Session Not Found**: HTTP 404 with helpful error message
+- **Export Failures**: Graceful degradation with partial data
+
+This enhanced server provides a complete learning management system with robust daily usage controls and comprehensive conversation tracking for educational ESP32 applications.

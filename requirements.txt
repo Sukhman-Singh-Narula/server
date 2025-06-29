@@ -1,4 +1,5 @@
-# ESP32 Audio Streaming Server Dependencies
+# Enhanced ESP32 Audio Streaming Server Dependencies
+# Now includes dependencies for daily limits and conversation transcription
 
 # FastAPI and ASGI
 fastapi==0.104.1
@@ -6,11 +7,11 @@ uvicorn[standard]==0.24.0
 websockets==12.0
 python-multipart==0.0.6
 
-# Pydantic for data validation
+# Pydantic for data validation (enhanced models)
 pydantic==2.5.0
 pydantic-settings==2.1.0
 
-# Firebase (Optional - only needed for full functionality)
+# Firebase (Required for enhanced features)
 firebase-admin==6.2.0
 google-cloud-firestore==2.13.1
 
@@ -23,11 +24,23 @@ python-dotenv==1.0.0
 # JSON handling
 orjson==3.9.10
 
-# Date/time utilities
+# Date/time utilities (enhanced for daily limits)
 python-dateutil==2.8.2
 
 # Cryptography (for security)
 cryptography==41.0.7
+
+# CSV handling for conversation exports
+pandas==2.1.4
+openpyxl==3.1.2
+
+# Text processing for conversation analysis
+nltk==3.8.1
+textstat==0.7.3
+
+# Enhanced logging and monitoring
+structlog==23.2.0
+prometheus-client==0.19.0
 
 # Development dependencies (optional)
 pytest==7.4.3
@@ -35,8 +48,21 @@ pytest-asyncio==0.21.1
 pytest-cov==4.1.0
 black==23.11.0
 isort==5.12.0
-flake8
+flake8==6.1.0
 mypy==1.7.1
 
 # Production deployment (optional)
 gunicorn==21.2.0
+
+# Additional utilities for enhanced features
+schedule==1.2.0  # For daily reset tasks
+python-slugify==8.0.1  # For safe filename generation
+tabulate==0.9.0  # For formatted console output
+rich==13.7.0  # For enhanced console output and progress bars
+
+# Data analysis (for conversation analytics)
+numpy==1.25.2
+scipy==1.11.4
+
+# Time zone handling (for accurate daily resets)
+pytz==2023.3

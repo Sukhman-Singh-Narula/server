@@ -7,3 +7,6 @@ docker-compose.yml
 .venv/
 extra.md
 esp32_server.log
+log/
+logs/
+*.log
