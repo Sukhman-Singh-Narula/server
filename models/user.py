@@ -168,7 +168,7 @@ class UserResponse(BaseModel):
             device_id=user.device_id,
             name=user.name,
             age=user.age,
-            status=user.status.value,
+            status=user.status if isinstance(user.status, str) else user.status.value,
             season=user.progress.season,
             episode=user.progress.episode,
             words_learnt_count=len(user.progress.words_learnt),
