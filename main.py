@@ -17,6 +17,7 @@ from routes.auth import router as auth_router
 from routes.users import router as users_router
 from routes.prompts import router as prompts_router
 from routes.websocket import router as websocket_router
+from routes.conversations import router as conversations_router
 
 # Middleware
 from middleware.security import SecurityMiddleware, get_cors_config
@@ -146,7 +147,7 @@ app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(prompts_router)
 app.include_router(websocket_router)
-
+app.include_router(conversations_router)
 
 # Root endpoint
 @app.get("/", 

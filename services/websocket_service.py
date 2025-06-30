@@ -636,7 +636,7 @@ class WebSocketConnectionManager(LoggerMixin):
                 await self._safe_send_message(self.connections[device_id], device_id, pong_response)
     
     async def _send_audio_to_esp32(self, device_id: str, audio_data: bytes):
-        """Send audio response from OpenAI to ESP32"""
+        """Send audio response from OpenAI to ESP32 - FIXED to be async"""
         if device_id in self.connections:
             try:
                 self.log_info(f"🔊 Forwarding {len(audio_data)} bytes of audio to ESP32 {device_id}")
