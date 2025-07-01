@@ -13,7 +13,7 @@ class OpenAIConnection(LoggerMixin):
     """Enhanced OpenAI Realtime API connection with transcription capture - FIXED"""
     
     def __init__(self, device_id: str, system_prompt: str, api_key: str,
-             audio_callback: Callable[[str, bytes], Awaitable[None]],  # FIXED: Add Awaitable
+             audio_callback: Callable[[str, bytes], Awaitable[None]],
              conversation_service=None):
         super().__init__()
         self.device_id = device_id
@@ -30,9 +30,10 @@ class OpenAIConnection(LoggerMixin):
         self.current_ai_response = ""
         self.ai_response_start_time = None
         
-        # ADD AUDIO BUFFERING
+        # ENHANCED AUDIO BUFFERING
         self.audio_buffer = bytearray()
         self.min_audio_duration_ms = 200
+        self.pending_audio_queue = []  # Queue audio while waiting for config
         
     async def connect(self):
         """Connect to OpenAI Realtime API"""
@@ -80,6 +81,9 @@ class OpenAIConnection(LoggerMixin):
             self.session_configured = True
             self.log_info(f"✅ Session configured for {self.device_id}")
             
+            # Process any queued audio
+            await self._process_queued_audio()
+            
             # Add system message to conversation
             if self.conversation_service:
                 await self.conversation_service.add_system_message(
@@ -106,8 +110,8 @@ class OpenAIConnection(LoggerMixin):
                 await self.conversation_service.add_user_message(
                     self.device_id,
                     transcript,
-                    confidence=None,  # OpenAI doesn't provide confidence scores
-                    duration_ms=None,  # We don't get duration from transcription event
+                    confidence=None,
+                    duration_ms=None,
                 )
         
         elif msg_type == 'conversation.item.input_audio_transcription.failed':
@@ -173,7 +177,6 @@ class OpenAIConnection(LoggerMixin):
             if audio_b64:
                 audio_data = base64.b64decode(audio_b64)
                 self.log_info(f"🔊 Received audio delta for {self.device_id}: {len(audio_data)} bytes")
-                # FIXED: Properly await the async callback
                 try:
                     await self.audio_callback(self.device_id, audio_data)
                 except Exception as e:
@@ -182,7 +185,6 @@ class OpenAIConnection(LoggerMixin):
                 self.log_warning(f"⚠️ Empty audio delta for {self.device_id}")
         
         elif msg_type == 'response.audio.done':
-            # AI audio response completed
             self.log_info(f"🎵 Audio response completed for {self.device_id}")
             
             # Calculate approximate duration if we have start time
@@ -254,8 +256,6 @@ class OpenAIConnection(LoggerMixin):
         
         else:
             self.log_info(f"🤔 Unhandled message type for {self.device_id}: {msg_type}")
-            # Log the full message for debugging unknown types
-            self.log_info(f"📋 Full message: {json.dumps(data, default=str)[:200]}...")
     
     async def _configure_session(self):
         """Configure the OpenAI session with enhanced settings for transcription"""
@@ -274,7 +274,7 @@ class OpenAIConnection(LoggerMixin):
                     "type": "server_vad",
                     "threshold": 0.5,
                     "prefix_padding_ms": 300,
-                    "silence_duration_ms": 500  # FIXED: Reduced for better responsiveness
+                    "silence_duration_ms": 500
                 }
             }
         }
@@ -283,12 +283,33 @@ class OpenAIConnection(LoggerMixin):
         self.log_info(f"✅ Session config sent for {self.device_id}")
         self.log_info(f"📋 Config details: modalities={config['session']['modalities']}, voice={config['session']['voice']}")
     
+    async def _process_queued_audio(self):
+        """Process audio that was queued while waiting for session configuration"""
+        if self.pending_audio_queue:
+            self.log_info(f"🎵 Processing {len(self.pending_audio_queue)} queued audio chunks for {self.device_id}")
+            
+            for audio_data in self.pending_audio_queue:
+                await self._send_audio_to_openai(audio_data)
+            
+            self.pending_audio_queue.clear()
+            self.log_info(f"✅ Finished processing queued audio for {self.device_id}")
+    
     async def send_audio(self, audio_data: bytes) -> bool:
         """Send audio data to OpenAI with improved buffering"""
-        if not self.is_connected or not self.session_configured:
-            self.log_warning(f"❌ Cannot send audio for {self.device_id}: connected={self.is_connected}, configured={self.session_configured}")
+        if not self.is_connected:
+            self.log_warning(f"❌ Cannot send audio for {self.device_id}: not connected")
             return False
         
+        if not self.session_configured:
+            # Queue the audio for later processing
+            self.pending_audio_queue.append(audio_data)
+            self.log_info(f"🎵 Queued audio for {self.device_id}: {len(audio_data)} bytes (queue size: {len(self.pending_audio_queue)})")
+            return True
+        
+        return await self._send_audio_to_openai(audio_data)
+    
+    async def _send_audio_to_openai(self, audio_data: bytes) -> bool:
+        """Actually send audio to OpenAI"""
         try:
             # Add to buffer
             self.audio_buffer.extend(audio_data)
@@ -413,7 +434,7 @@ class OpenAIService(LoggerMixin):
         await connection.connect()
         self.active_connections[device_id] = connection
         
-        self.log_info(f"✅ Created OpenAI connection for {self.device_id} with transcription capture")
+        self.log_info(f"✅ Created OpenAI connection for {device_id} with transcription capture")
         return connection
     
     async def send_audio(self, device_id: str, audio_data: bytes) -> bool:
@@ -422,33 +443,11 @@ class OpenAIService(LoggerMixin):
             return False
         return await self.active_connections[device_id].send_audio(audio_data)
     
-    async def commit_audio_buffer(self):
-        """Manually commit the audio buffer to trigger response generation"""
-        if not self.is_connected or not self.session_configured:
+    async def commit_audio_buffer(self, device_id: str) -> bool:
+        """Commit audio buffer for a specific device"""
+        if device_id not in self.active_connections:
             return False
-        
-        try:
-            # Send any remaining buffered audio first
-            if len(self.audio_buffer) > 0:
-                audio_b64 = base64.b64encode(self.audio_buffer).decode('utf-8')
-                message = {
-                    "type": "input_audio_buffer.append",
-                    "audio": audio_b64
-                }
-                await self.websocket.send(json.dumps(message))
-                self.audio_buffer.clear()
-                await asyncio.sleep(0.1)  # Small delay
-            
-            # Now commit
-            message = {
-                "type": "input_audio_buffer.commit"
-            }
-            await self.websocket.send(json.dumps(message))
-            self.log_info(f"🎯 Audio buffer committed for {self.device_id}")
-            return True
-        except Exception as e:
-            self.log_error(f"❌ Failed to commit audio buffer for {self.device_id}: {e}")
-            return False
+        return await self.active_connections[device_id].commit_audio_buffer()
     
     async def create_response(self, device_id: str) -> bool:
         """Trigger response creation for a device"""

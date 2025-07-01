@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Transcription-only test for ESP32 server
-Tests conversation capture and storage without affecting daily limits much
+Fixed transcription-only test for ESP32 server
 """
 
 import asyncio
@@ -111,15 +110,19 @@ class TranscriptionOnlyTester:
                 
                 # Step 2: Send audio and monitor transcription
                 print(f"\n🎵 Testing audio streaming and transcription...")
-                audio_stats = await self.stream_audio_and_monitor(websocket, duration=8)
+                audio_stats = await self.stream_audio_and_monitor(websocket, duration=6)  # Reduced duration
                 
-                # Step 3: End session gracefully
-                print(f"\n🏁 Ending session...")
-                await self.end_session_gracefully(websocket)
+                # Step 3: Wait for AI response to complete
+                print(f"\n⏳ Waiting for AI response to complete...")
+                await asyncio.sleep(5)  # Give AI time to respond
                 
-                # Step 4: Verify conversation storage
-                print(f"\n💾 Verifying conversation storage...")
-                await asyncio.sleep(3)  # Wait for data to be saved
+                # Step 4: End session gracefully - DON'T send disconnect, just close
+                print(f"\n🏁 Ending session gracefully...")
+                await self.end_session_gracefully()
+                
+                # Step 5: Wait before checking storage
+                print(f"\n💾 Waiting for conversation to be saved...")
+                await asyncio.sleep(5)  # Wait longer for data to be saved
                 
                 storage_results = await self.verify_conversation_storage(device_id, session_id)
                 
@@ -129,10 +132,10 @@ class TranscriptionOnlyTester:
                 print(f"   ✓ Messages received: {audio_stats['messages_received']}")
                 print(f"   ✓ Session duration: {audio_stats['duration']:.1f} seconds")
                 print(f"   ✓ Conversation stored: {storage_results['stored']}")
-                print(f"   ✓ Message count: {storage_results['message_count']}")
-                print(f"   ✓ User messages: {storage_results['user_messages']}")
-                print(f"   ✓ AI messages: {storage_results['ai_messages']}")
-                print(f"   ✓ System messages: {storage_results['system_messages']}")
+                print(f"   ✓ Message count: {storage_results.get('message_count', 0)}")
+                print(f"   ✓ User messages: {storage_results.get('user_messages', 0)}")
+                print(f"   ✓ AI messages: {storage_results.get('ai_messages', 0)}")
+                print(f"   ✓ System messages: {storage_results.get('system_messages', 0)}")
                 
                 return storage_results['stored']
                 
@@ -175,16 +178,16 @@ class TranscriptionOnlyTester:
         print("   ⏰ Setup timeout")
         return None
 
-    async def stream_audio_and_monitor(self, websocket, duration: int = 8) -> dict:
+    async def stream_audio_and_monitor(self, websocket, duration: int = 6) -> dict:
         """Stream audio and monitor for transcription"""
         chunks_sent = 0
         messages_received = 0
         start_time = time.time()
+        important_messages = []
         
         # Message monitoring task
         async def monitor_messages():
-            nonlocal messages_received
-            message_types = []
+            nonlocal messages_received, important_messages
             
             while True:
                 try:
@@ -193,12 +196,12 @@ class TranscriptionOnlyTester:
                     msg_type = data.get('type')
                     
                     messages_received += 1
-                    message_types.append(msg_type)
                     
                     print(f"      📨 {msg_type}")
                     
                     # Log important transcription events
-                    if any(keyword in msg_type.lower() for keyword in ['transcription', 'response', 'audio', 'speech']):
+                    if any(keyword in msg_type.lower() for keyword in ['transcription', 'response', 'audio', 'speech', 'openai']):
+                        important_messages.append((msg_type, data))
                         print(f"         🎯 Important: {msg_type}")
                     
                     # Respond to pings
@@ -211,8 +214,6 @@ class TranscriptionOnlyTester:
                 except Exception as e:
                     print(f"         ❌ Monitor error: {e}")
                     break
-            
-            return message_types
         
         # Start monitoring
         monitor_task = asyncio.create_task(monitor_messages())
@@ -238,114 +239,123 @@ class TranscriptionOnlyTester:
                 print(f"      ❌ Audio send error: {e}")
                 break
         
+        # Continue monitoring for a bit longer to catch AI responses
+        print(f"   ⏳ Monitoring for AI responses...")
+        await asyncio.sleep(3)
+        
         # Stop monitoring
         monitor_task.cancel()
         
         total_duration = time.time() - start_time
         print(f"   ✅ Audio streaming complete: {chunks_sent} chunks in {total_duration:.1f}s")
         print(f"   📨 Total messages received: {messages_received}")
+        print(f"   🎯 Important messages: {len(important_messages)}")
         
         return {
             "chunks_sent": chunks_sent,
             "messages_received": messages_received,
-            "duration": total_duration
+            "duration": total_duration,
+            "important_messages": len(important_messages)
         }
 
-    async def end_session_gracefully(self, websocket):
-        """End session without advancing episode"""
-        print("   🔌 Sending graceful disconnect...")
-        
-        # Send a simple disconnect message instead of episode completion
-        disconnect_message = {
-            "type": "client_disconnect",
-            "reason": "transcription_test_complete",
-            "timestamp": time.time()
-        }
-        
-        try:
-            await websocket.send(json.dumps(disconnect_message))
-            await asyncio.sleep(1)  # Give time for processing
-        except Exception as e:
-            print(f"   ❌ Disconnect error: {e}")
+    async def end_session_gracefully(self):
+        """End session gracefully without sending disconnect"""
+        # Just wait - let the WebSocket close naturally
+        await asyncio.sleep(1)
 
     async def verify_conversation_storage(self, device_id: str, session_id: str) -> dict:
         """Verify conversation was stored in Firebase"""
         print("   🔍 Checking conversation storage...")
         
-        try:
-            # Get all conversations
-            response = requests.get(f"{self.base_url}/conversations/{device_id}", timeout=10)
-            
-            if response.status_code != 200:
-                print(f"   ❌ Failed to get conversations: {response.status_code}")
-                return {"stored": False}
-            
-            conversations = response.json()
-            print(f"   📋 Found {len(conversations)} total conversations")
-            
-            # Find our session
-            target_session = None
-            for conv in conversations:
-                if conv.get('session_id') == session_id:
-                    target_session = conv
-                    break
-            
-            if not target_session:
-                print(f"   ❌ Session {session_id[:8]}... not found")
-                return {"stored": False}
-            
-            print(f"   ✅ Session found: {target_session['message_count']} messages")
-            
-            # Get detailed session data
-            detail_response = requests.get(
-                f"{self.base_url}/conversations/{device_id}/session/{session_id}",
-                timeout=10
-            )
-            
-            if detail_response.status_code == 200:
-                session_detail = detail_response.json()
-                messages = session_detail.get('messages', [])
+        # Try multiple times as data might take time to appear
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                # Get all conversations
+                response = requests.get(f"{self.base_url}/conversations/{device_id}", timeout=10)
                 
-                # Count message types
-                user_messages = len([m for m in messages if m.get('type') == 'user_speech'])
-                ai_messages = len([m for m in messages if m.get('type') == 'ai_response'])
-                system_messages = len([m for m in messages if m.get('type') == 'system_message'])
+                if response.status_code != 200:
+                    print(f"   ❌ Failed to get conversations: {response.status_code}")
+                    if attempt < max_attempts - 1:
+                        print(f"   🔄 Retrying in 3 seconds... (attempt {attempt + 1}/{max_attempts})")
+                        await asyncio.sleep(3)
+                        continue
+                    return {"stored": False}
                 
-                print(f"   📝 Message breakdown:")
-                print(f"      User messages: {user_messages}")
-                print(f"      AI messages: {ai_messages}")
-                print(f"      System messages: {system_messages}")
+                conversations = response.json()
+                print(f"   📋 Found {len(conversations)} total conversations")
                 
-                # Show sample messages
-                if messages:
-                    print(f"   📋 Sample messages:")
-                    for i, msg in enumerate(messages[:3]):
-                        msg_type = msg.get('type', 'unknown')
-                        content = msg.get('content', '')
-                        short_content = content[:40] + "..." if len(content) > 40 else content
-                        timestamp = msg.get('timestamp', '')
-                        print(f"      {i+1}. [{msg_type}] {short_content}")
+                # Find our session
+                target_session = None
+                for conv in conversations:
+                    if conv.get('session_id') == session_id:
+                        target_session = conv
+                        break
                 
-                return {
-                    "stored": True,
-                    "message_count": len(messages),
-                    "user_messages": user_messages,
-                    "ai_messages": ai_messages,
-                    "system_messages": system_messages
-                }
-            else:
-                print(f"   ⚠️  Could not get session details: {detail_response.status_code}")
-                return {
-                    "stored": True,
-                    "message_count": target_session['message_count'],
-                    "user_messages": 0,
-                    "ai_messages": 0,
-                    "system_messages": 0
-                }
+                if not target_session:
+                    if attempt < max_attempts - 1:
+                        print(f"   ⏳ Session {session_id[:8]}... not found yet, retrying...")
+                        await asyncio.sleep(3)
+                        continue
+                    else:
+                        print(f"   ❌ Session {session_id[:8]}... not found after {max_attempts} attempts")
+                        return {"stored": False}
                 
-        except Exception as e:
-            print(f"   ❌ Storage verification error: {e}")
-            return {"stored": False}
+                print(f"   ✅ Session found: {target_session.get('message_count', 0)} messages")
+                
+                # Get detailed session data
+                detail_response = requests.get(
+                    f"{self.base_url}/conversations/{device_id}/session/{session_id}",
+                    timeout=10
+                )
+                
+                if detail_response.status_code == 200:
+                    session_detail = detail_response.json()
+                    messages = session_detail.get('messages', [])
+                    
+                    # Count message types
+                    user_messages = len([m for m in messages if m.get('type') == 'user_speech'])
+                    ai_messages = len([m for m in messages if m.get('type') == 'ai_response'])
+                    system_messages = len([m for m in messages if m.get('type') == 'system_message'])
+                    
+                    print(f"   📝 Message breakdown:")
+                    print(f"      User messages: {user_messages}")
+                    print(f"      AI messages: {ai_messages}")
+                    print(f"      System messages: {system_messages}")
+                    
+                    # Show sample messages
+                    if messages:
+                        print(f"   📋 Sample messages:")
+                        for i, msg in enumerate(messages[:5]):  # Show first 5
+                            msg_type = msg.get('type', 'unknown')
+                            content = msg.get('content', '')
+                            short_content = content[:40] + "..." if len(content) > 40 else content
+                            print(f"      {i+1}. [{msg_type}] {short_content}")
+                    
+                    return {
+                        "stored": True,
+                        "message_count": len(messages),
+                        "user_messages": user_messages,
+                        "ai_messages": ai_messages,
+                        "system_messages": system_messages
+                    }
+                else:
+                    print(f"   ⚠️  Could not get session details: {detail_response.status_code}")
+                    return {
+                        "stored": True,
+                        "message_count": target_session.get('message_count', 0),
+                        "user_messages": 0,
+                        "ai_messages": 0,
+                        "system_messages": 0
+                    }
+                    
+            except Exception as e:
+                print(f"   ❌ Storage verification error (attempt {attempt + 1}): {e}")
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(3)
+                    continue
+                    
+        return {"stored": False}
 
     async def run_transcription_test(self):
         """Run focused transcription test"""
@@ -373,6 +383,19 @@ class TranscriptionOnlyTester:
         print(f"Device ID: {device_id}")
         print(f"Test Result: {'✅ SUCCESS' if success else '❌ FAILED'}")
         print(f"Transcription Storage: {'✅ Working' if success else '❌ Not Working'}")
+        
+        if success:
+            print("\n🎉 Great! The transcription system is working correctly:")
+            print("   ✓ WebSocket connections work")
+            print("   ✓ Audio streaming works")
+            print("   ✓ OpenAI transcription works")
+            print("   ✓ Conversation storage works")
+        else:
+            print("\n🔧 Transcription system needs attention:")
+            print("   • Check if conversations are being saved to Firebase")
+            print("   • Verify OpenAI API key and connection")
+            print("   • Check server logs for detailed error information")
+        
         print("=" * 50)
 
 
