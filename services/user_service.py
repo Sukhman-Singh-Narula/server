@@ -9,6 +9,10 @@ from services.firebase_service import get_firebase_service
 from utils.exceptions import UserAlreadyExistsException, UserNotFoundException, ValidationException
 from utils.validators import UserValidator, DeviceValidator
 from utils.logger import LoggerMixin, log_user_registration
+from typing import Optional, List, Dict, Any
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class UserService(LoggerMixin):
@@ -124,6 +128,292 @@ class UserService(LoggerMixin):
         
         self.log_info(f"Progress updated for user {device_id}")
         return UserResponse.from_user(updated_user)
+    
+    async def link_device_to_firebase_user(
+        self, 
+        device_id: str, 
+        firebase_uid: str, 
+        child_id: str, 
+        parent_email: str
+    ) -> bool:
+        """
+        Link an ESP32 device to a Firebase user account
+        
+        Args:
+            device_id: ESP32 device identifier
+            firebase_uid: Firebase user UID
+            child_id: Child profile ID from mobile app
+            parent_email: Parent's email address
+            
+        Returns:
+            True if linking was successful
+            
+        Raises:
+            ValidationException: If device or user data is invalid
+            UserNotFoundException: If device is not found
+        """
+        try:
+            # Get the existing device user
+            existing_user = await self.get_user(device_id)
+            
+            # Update the user document with Firebase linking info
+            update_data = {
+                'firebase_uid': firebase_uid,
+                'child_id': child_id,
+                'parent_email': parent_email,
+                'linked_at': self._get_current_timestamp(),
+                'linked': True
+            }
+            
+            # Update in Firebase/Firestore
+            await self.firebase_service.update_user_document(device_id, update_data)
+            
+            logger.info(f"Device {device_id} linked to Firebase user {firebase_uid}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to link device {device_id} to Firebase user {firebase_uid}: {e}")
+            raise e
+
+    async def get_devices_by_firebase_uid(self, firebase_uid: str) -> List[Dict[str, Any]]:
+        """
+        Get all devices linked to a Firebase user
+        
+        Args:
+            firebase_uid: Firebase user UID
+            
+        Returns:
+            List of device dictionaries with user info
+        """
+        try:
+            # Query Firestore for all users with this Firebase UID
+            users_collection = self.firebase_service.db.collection('users')
+            query = users_collection.where('firebase_uid', '==', firebase_uid)
+            docs = query.stream()
+            
+            devices = []
+            for doc in docs:
+                user_data = doc.to_dict()
+                devices.append({
+                    'device_id': doc.id,
+                    'name': user_data.get('name'),
+                    'age': user_data.get('age'),
+                    'child_id': user_data.get('child_id'),
+                    'linked_at': user_data.get('linked_at'),
+                    'last_activity': user_data.get('last_activity'),
+                    'current_episode': user_data.get('current_episode', 1),
+                    'current_season': user_data.get('current_season', 1)
+                })
+            
+            logger.info(f"Found {len(devices)} devices for Firebase user {firebase_uid}")
+            return devices
+            
+        except Exception as e:
+            logger.error(f"Failed to get devices for Firebase user {firebase_uid}: {e}")
+            return []
+
+    async def get_user_transcripts(self, device_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Get conversation transcripts for a device
+        
+        Args:
+            device_id: ESP32 device identifier
+            limit: Maximum number of transcripts to return
+            
+        Returns:
+            List of transcript dictionaries
+        """
+        try:
+            # Query transcripts collection
+            transcripts_collection = self.firebase_service.db.collection('transcripts')
+            query = (transcripts_collection
+                    .where('device_id', '==', device_id)
+                    .order_by('timestamp', direction='DESCENDING')
+                    .limit(limit))
+            
+            docs = query.stream()
+            
+            transcripts = []
+            for doc in docs:
+                transcript_data = doc.to_dict()
+                transcripts.append({
+                    'id': doc.id,
+                    'date': transcript_data.get('date'),
+                    'time': transcript_data.get('time'),
+                    'duration': transcript_data.get('duration'),
+                    'episode_title': transcript_data.get('episode_title'),
+                    'conversation_count': transcript_data.get('conversation_count', 0),
+                    'preview': transcript_data.get('preview', ''),
+                    'timestamp': transcript_data.get('timestamp')
+                })
+            
+            logger.info(f"Retrieved {len(transcripts)} transcripts for device {device_id}")
+            return transcripts
+            
+        except Exception as e:
+            logger.error(f"Failed to get transcripts for device {device_id}: {e}")
+            return []
+
+    async def save_conversation_transcript(
+        self, 
+        device_id: str, 
+        conversation_data: Dict[str, Any]
+    ) -> str:
+        """
+        Save a conversation transcript
+        
+        Args:
+            device_id: ESP32 device identifier
+            conversation_data: Dictionary containing conversation details
+            
+        Returns:
+            Document ID of the saved transcript
+        """
+        try:
+            transcript_doc = {
+                'device_id': device_id,
+                'date': conversation_data.get('date'),
+                'time': conversation_data.get('time'),
+                'duration': conversation_data.get('duration'),
+                'episode_title': conversation_data.get('episode_title'),
+                'season': conversation_data.get('season'),
+                'episode': conversation_data.get('episode'),
+                'conversation_count': conversation_data.get('conversation_count'),
+                'preview': conversation_data.get('preview'),
+                'full_transcript': conversation_data.get('full_transcript', []),
+                'timestamp': self._get_current_timestamp(),
+                'words_introduced': conversation_data.get('words_introduced', []),
+                'topics_covered': conversation_data.get('topics_covered', [])
+            }
+            
+            # Save to Firestore
+            doc_ref = await self.firebase_service.db.collection('transcripts').add(transcript_doc)
+            
+            logger.info(f"Saved transcript for device {device_id}: {doc_ref.id}")
+            return doc_ref.id
+            
+        except Exception as e:
+            logger.error(f"Failed to save transcript for device {device_id}: {e}")
+            raise e
+
+    async def update_learning_progress(
+        self, 
+        device_id: str, 
+        words_learned: List[str] = None,
+        topics_learned: List[str] = None
+    ) -> bool:
+        """
+        Update learning progress for a user
+        
+        Args:
+            device_id: ESP32 device identifier
+            words_learned: New words learned in this session
+            topics_learned: New topics learned in this session
+            
+        Returns:
+            True if update was successful
+        """
+        try:
+            # Get current user data
+            user_data = await self.get_user(device_id)
+            
+            # Update progress
+            current_words = set(user_data.words_learnt or [])
+            current_topics = set(user_data.topics_learnt or [])
+            
+            if words_learned:
+                current_words.update(words_learned)
+            
+            if topics_learned:
+                current_topics.update(topics_learned)
+            
+            update_data = {
+                'words_learnt': list(current_words),
+                'topics_learnt': list(current_topics),
+                'last_activity': self._get_current_timestamp(),
+                'total_words_count': len(current_words),
+                'total_topics_count': len(current_topics)
+            }
+            
+            # Update in Firestore
+            await self.firebase_service.update_user_document(device_id, update_data)
+            
+            logger.info(f"Updated learning progress for device {device_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to update learning progress for device {device_id}: {e}")
+            raise e
+
+    async def get_user_statistics(self, device_id: str) -> Dict[str, Any]:
+        """
+        Get comprehensive statistics for a user
+        
+        Args:
+            device_id: ESP32 device identifier
+            
+        Returns:
+            Dictionary containing user statistics
+        """
+        try:
+            # Get user data
+            user_data = await self.get_user(device_id)
+            
+            # Get session statistics from sessions collection
+            sessions_collection = self.firebase_service.db.collection('sessions')
+            query = sessions_collection.where('device_id', '==', device_id)
+            sessions = list(query.stream())
+            
+            total_sessions = len(sessions)
+            total_session_time = sum(
+                session.to_dict().get('duration_seconds', 0) 
+                for session in sessions
+            )
+            
+            # Calculate streak days (simplified - you might want a more sophisticated calculation)
+            streak_days = 0
+            if user_data.last_activity:
+                # Simple calculation - could be enhanced
+                from datetime import datetime, timedelta
+                last_activity = datetime.fromisoformat(user_data.last_activity.replace('Z', '+00:00'))
+                now = datetime.now()
+                if (now - last_activity).days < 2:  # Allow for one day gap
+                    streak_days = 1  # Simplified streak calculation
+            
+            return {
+                'words_learnt': user_data.words_learnt or [],
+                'topics_learnt': user_data.topics_learnt or [],
+                'total_sessions': total_sessions,
+                'total_session_time': total_session_time,
+                'current_episode': user_data.current_episode or 1,
+                'current_season': user_data.current_season or 1,
+                'last_activity': user_data.last_activity,
+                'streak_days': streak_days,
+                'total_words_count': len(user_data.words_learnt or []),
+                'total_topics_count': len(user_data.topics_learnt or []),
+                'average_session_duration': total_session_time / total_sessions if total_sessions > 0 else 0
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get statistics for device {device_id}: {e}")
+            return {
+                'words_learnt': [],
+                'topics_learnt': [],
+                'total_sessions': 0,
+                'total_session_time': 0,
+                'current_episode': 1,
+                'current_season': 1,
+                'last_activity': None,
+                'streak_days': 0,
+                'total_words_count': 0,
+                'total_topics_count': 0,
+                'average_session_duration': 0
+            }
+
+    def _get_current_timestamp(self) -> str:
+        """Get current timestamp in ISO format"""
+        from datetime import datetime
+        return datetime.utcnow().isoformat() + 'Z'
     
     async def advance_episode(self, device_id: str) -> UserResponse:
         """

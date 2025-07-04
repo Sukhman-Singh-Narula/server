@@ -19,7 +19,7 @@ class UserRegistrationRequest(BaseModel):
     device_id: str = Field(..., description="Device ID in format ABCD1234")
     name: str = Field(..., min_length=1, max_length=100, description="User's name")
     age: int = Field(..., ge=1, le=120, description="User's age")
-    
+    parent_email: Optional[str] = None  # Link to parent account
     @validator('device_id')
     def validate_device_id(cls, v):
         import re
