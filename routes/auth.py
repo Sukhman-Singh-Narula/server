@@ -1,9 +1,9 @@
-# routes/auth.py - Fixed Authentication Routes
+# routes/auth.py - Extended with mobile endpoints
 """
-Authentication and user registration routes
+Authentication and user registration routes with mobile integration
 """
 from fastapi import APIRouter, HTTPException, status, Depends
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
 
 from models.user import UserRegistrationRequest, UserResponse
@@ -15,10 +15,12 @@ from utils.exceptions import (
 from utils.logger import LoggerMixin
 from utils.security import SecurityValidator
 from utils.firebase_auth import verify_firebase_token, get_current_user
+import logging
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+logger = logging.getLogger(__name__)
 
-# Request/Response models for mobile integration
+# Mobile app models
 class DeviceLinkRequest(BaseModel):
     device_id: str
     child_id: str
@@ -35,15 +37,13 @@ def get_user_service_dependency():
     """Dependency to get user service"""
     return get_user_service()
 
+# Original ESP32 endpoints
 @router.post("/register", 
              response_model=UserResponse,
              status_code=status.HTTP_201_CREATED,
              summary="Register a new user",
              description="Register a new ESP32 device user with name and age")
-async def register_user(
-    user_data: UserRegistrationRequest, 
-    user_service: UserService = Depends(get_user_service_dependency)
-):
+async def register_user(user_data: UserRegistrationRequest, user_service: UserService = Depends(get_user_service_dependency)):
     """
     Register a new user with device ID validation
     
@@ -59,31 +59,22 @@ async def register_user(
         # Register user
         user_response = await user_service.register_user(user_data)
         
-        import logging
-        logger = logging.getLogger(__name__)
         logger.info(f"User registered successfully: {user_data.device_id}")
-        
         return user_response
         
     except ValidationException as e:
-        import logging
-        logger = logging.getLogger(__name__)
         logger.warning(f"Registration validation failed: {e.message}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=e.message
         )
     except UserAlreadyExistsException as e:
-        import logging
-        logger = logging.getLogger(__name__)
         logger.warning(f"User already exists: {user_data.device_id}")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="User with this device ID already exists"
         )
     except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"Registration error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -103,8 +94,6 @@ async def verify_device_registration(device_id: str):
         user_service = get_user_service()
         user_response = await user_service.get_user(device_id)
         
-        import logging
-        logger = logging.getLogger(__name__)
         logger.info(f"Device verification successful: {device_id}")
         
         return {
@@ -185,8 +174,6 @@ async def link_device_to_account(
             parent_email=request.parent_email
         )
         
-        import logging
-        logger = logging.getLogger(__name__)
         logger.info(f"Device linked successfully: {request.device_id} -> {request.child_id}")
         
         return DeviceLinkResponse(
@@ -202,38 +189,11 @@ async def link_device_to_account(
             detail=e.message
         )
     except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"Device linking error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to link device"
         )
-
-@router.get("/registration-stats",
-            summary="Get registration statistics",
-            description="Get general registration statistics (admin endpoint)")
-async def get_registration_stats():
-    """
-    Get registration statistics (would typically require admin authentication)
-    """
-    # Note: In a real application, this would require admin authentication
-    # and would pull actual statistics from the database
-    
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info("Registration stats requested")
-    
-    return {
-        "message": "Registration statistics endpoint",
-        "note": "This would require admin authentication and database queries in production",
-        "stats": {
-            "total_users": "Would fetch from database",
-            "active_users": "Would fetch from database", 
-            "new_registrations_today": "Would fetch from database",
-            "average_age": "Would calculate from database"
-        }
-    }
 
 @router.get("/me",
             summary="Get current user info",
@@ -253,4 +213,24 @@ async def get_current_user_info(
         "name": current_user.get('name'),
         "picture": current_user.get('picture'),
         "provider_data": current_user.get('firebase', {}).get('identities', {})
+    }
+
+@router.get("/registration-stats",
+            summary="Get registration statistics",
+            description="Get general registration statistics (admin endpoint)")
+async def get_registration_stats():
+    """
+    Get registration statistics (would typically require admin authentication)
+    """
+    logger.info("Registration stats requested")
+    
+    return {
+        "message": "Registration statistics endpoint",
+        "note": "This would require admin authentication and database queries in production",
+        "stats": {
+            "total_users": "Would fetch from database",
+            "active_users": "Would fetch from database", 
+            "new_registrations_today": "Would fetch from database",
+            "average_age": "Would calculate from database"
+        }
     }
