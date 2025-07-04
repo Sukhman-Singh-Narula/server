@@ -3,7 +3,7 @@
 # FastAPI and ASGI
 fastapi==0.104.1
 pydantic==1.10.13
-pydantic-settings==0.4.0
+pydantic-settings==0.2.5
 uvicorn[standard]==0.24.0
 
 websockets==12.0
