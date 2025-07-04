@@ -7,8 +7,8 @@ websockets==12.0
 python-multipart==0.0.6
 
 # Pydantic for data validation
-pydantic==2.5.0
-pydantic-settings==2.1.0
+pydantic==2.5.0 --prefer-binary
+pydantic-settings==2.1.0 --prefer-binary
 
 # Firebase (Optional - only needed for full functionality)
 firebase-admin==6.2.0
