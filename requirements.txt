@@ -1,7 +1,7 @@
 # ESP32 Audio Streaming Server Dependencies
 
 # Force binary wheel to avoid build failures
-PyYAML==5.4.1
+PyYAML==6.0.1
 setuptools==65.5.0  # Prevent cython_sources build bug
 
 # FastAPI and ASGI
