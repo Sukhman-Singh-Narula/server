@@ -1,6 +1,6 @@
 """
-Complete WebSocket service for ESP32 Audio Streaming Server
-Fixed version with proper audio streaming from OpenAI to ESP32
+SIMPLIFIED: WebSocket service using ONLY OpenAI VAD for silence detection
+Removed custom silence detection to prevent conflicts
 """
 import asyncio
 import json
@@ -15,7 +15,7 @@ from utils.logger import LoggerMixin
 
 
 class WebSocketConnectionManager(LoggerMixin):
-    """WebSocket connection manager with real-time audio streaming"""
+    """Simplified WebSocket connection manager - OpenAI VAD only"""
     
     def __init__(self):
         super().__init__()
@@ -26,16 +26,17 @@ class WebSocketConnectionManager(LoggerMixin):
         self.connections: Dict[str, WebSocket] = {}
         self.connection_times: Dict[str, float] = {}
         
-        # Activity tracking
+        # Activity tracking (for keepalive only)
         self.keepalive_tasks: Dict[str, asyncio.Task] = {}
         self.last_activity: Dict[str, float] = {}
-        self.last_audio_time: Dict[str, float] = {}
+        
+        # Response state tracking (to prevent issues during responses)
+        self.openai_responding: Dict[str, bool] = {}
         
         # Configuration
         self.keepalive_interval = 10  # Send ping every 10 seconds
         self.connection_timeout = 300  # 5 minutes total timeout
         self.activity_timeout = 120   # 2 minutes of inactivity before warning
-        self.silence_threshold = 1.0  # 1 second of silence before committing buffer
     
     async def connect_device(self, websocket: WebSocket, device_id: str, remote_addr: str) -> bool:
         """Handle ESP32 device connection with audio streaming"""
@@ -50,7 +51,9 @@ class WebSocketConnectionManager(LoggerMixin):
             self.connections[device_id] = websocket
             self.connection_times[device_id] = connection_start_time
             self.last_activity[device_id] = connection_start_time
-            self.last_audio_time[device_id] = connection_start_time
+            
+            # Initialize response state
+            self.openai_responding[device_id] = False
             
             # Send immediate acknowledgment
             ack_message = {
@@ -98,6 +101,7 @@ class WebSocketConnectionManager(LoggerMixin):
                 "season": user.progress.season,
                 "episode": user.progress.episode,
                 "audio_streaming": True,
+                "vad_mode": "openai_server_vad",  # Indicate VAD mode
                 "server_time": datetime.now().isoformat()
             }
             
@@ -109,8 +113,8 @@ class WebSocketConnectionManager(LoggerMixin):
                 self._create_openai_connection_async(device_id, system_prompt_obj.prompt)
             )
             
-            # Start silence detection for triggering responses
-            asyncio.create_task(self._silence_detection_loop(device_id))
+            # ✅ NO MORE custom silence detection loop!
+            # OpenAI VAD will handle all response triggering automatically
             
             # Handle messages
             await self._handle_messages(websocket, device_id)
@@ -124,7 +128,7 @@ class WebSocketConnectionManager(LoggerMixin):
         return True
     
     async def _send_audio_to_esp32(self, device_id: str, audio_data: bytes):
-        """FIXED: Send audio response from OpenAI to ESP32"""
+        """Send audio response from OpenAI to ESP32"""
         if device_id in self.connections:
             try:
                 websocket = self.connections[device_id]
@@ -134,18 +138,40 @@ class WebSocketConnectionManager(LoggerMixin):
                     self.log_warning(f"⚠️ WebSocket not connected for {device_id}, cannot send audio")
                     return
                 
-                # Log audio being sent
-                self.log_info(f"🔊 Sending {len(audio_data)} bytes of audio to ESP32 {device_id}")
+                current_time = time.time()
                 
-                # CRITICAL: Send as binary data to ESP32
-                await websocket.send_bytes(audio_data)
+                if len(audio_data) > 0:
+                    # Mark that OpenAI is responding
+                    if not self.openai_responding.get(device_id, False):
+                        self.openai_responding[device_id] = True
+                        self.log_info(f"🎤 OpenAI response started for {device_id}")
+                    
+                    # Log and send audio
+                    self.log_info(f"🔊 Sending {len(audio_data)} bytes of audio to ESP32 {device_id}")
+                    await websocket.send_bytes(audio_data)
+                    self.log_info(f"✅ Successfully sent {len(audio_data)} bytes to ESP32 {device_id}")
+                    
+                else:
+                    # Empty audio data means response is complete
+                    self.log_info(f"🏁 OpenAI response completed for {device_id}")
+                    self.openai_responding[device_id] = False
+                    
+                    # Send end-of-response marker to ESP32
+                    end_message = {
+                        "type": "audio_complete",
+                        "device_id": device_id,
+                        "timestamp": current_time
+                    }
+                    await self._safe_send_message(websocket, device_id, end_message)
                 
-                self.log_info(f"✅ Successfully sent {len(audio_data)} bytes to ESP32 {device_id}")
-                self.last_activity[device_id] = time.time()
+                # Update activity timestamp
+                self.last_activity[device_id] = current_time
                 
             except Exception as e:
                 self.log_error(f"❌ Failed to send audio to ESP32 {device_id}: {e}")
-                # Try to remove the connection if it's broken
+                # Reset response state on error
+                self.openai_responding[device_id] = False
+                
                 if "ConnectionClosed" in str(e) or "Connection is closed" in str(e):
                     self.log_info(f"🔌 Removing broken connection for {device_id}")
                     if device_id in self.connections:
@@ -158,13 +184,12 @@ class WebSocketConnectionManager(LoggerMixin):
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                # CRITICAL: Use the bound method as callback
                 await self.openai_service.create_connection(
                     device_id=device_id,
                     system_prompt=system_prompt,
-                    audio_callback=self._send_audio_to_esp32  # This method is bound to self
+                    audio_callback=self._send_audio_to_esp32
                 )
-                self.log_info(f"✅ OpenAI connected for {device_id} with audio callback")
+                self.log_info(f"✅ OpenAI connected for {device_id} with OpenAI VAD enabled")
                 
                 # Notify ESP32 that OpenAI is ready
                 if device_id in self.connections:
@@ -172,7 +197,8 @@ class WebSocketConnectionManager(LoggerMixin):
                         "type": "openai_ready",
                         "device_id": device_id,
                         "timestamp": time.time(),
-                        "message": "AI assistant ready for conversation!"
+                        "vad_mode": "openai_server",
+                        "message": "AI assistant ready with automatic voice detection!"
                     }
                     await self._safe_send_message(self.connections[device_id], device_id, notification)
                 
@@ -181,11 +207,10 @@ class WebSocketConnectionManager(LoggerMixin):
             except Exception as e:
                 self.log_warning(f"⚠️ OpenAI connection attempt {attempt + 1} failed for {device_id}: {e}")
                 if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                    await asyncio.sleep(2 ** attempt)
         
         self.log_error(f"❌ Failed to connect to OpenAI after {max_retries} attempts for {device_id}")
         
-        # Notify ESP32 of OpenAI connection failure
         if device_id in self.connections:
             error_notification = {
                 "type": "openai_error",
@@ -231,7 +256,6 @@ class WebSocketConnectionManager(LoggerMixin):
                         break
                 
                 except asyncio.TimeoutError:
-                    # Continue to allow keepalive
                     continue
                     
                 except WebSocketDisconnect:
@@ -250,14 +274,13 @@ class WebSocketConnectionManager(LoggerMixin):
             self.log_error(f"❌ Message handling error for {device_id}: {e}", exc_info=True)
     
     async def _handle_audio_data(self, device_id: str, audio_data: bytes):
-        """Handle audio data from ESP32 - forward to OpenAI"""
-        current_time = time.time()
-        self.last_activity[device_id] = current_time
-        self.last_audio_time[device_id] = current_time
+        """Handle audio data from ESP32 - forward to OpenAI (simplified)"""
+        self.last_activity[device_id] = time.time()
         
         self.log_info(f"🎵 Received audio from {device_id}: {len(audio_data)} bytes")
         
-        # Forward audio to OpenAI for real-time processing
+        # Simply forward all audio to OpenAI
+        # OpenAI VAD will automatically handle when to respond
         if device_id in self.openai_service.active_connections:
             try:
                 await self.openai_service.send_audio(device_id, audio_data)
@@ -266,40 +289,6 @@ class WebSocketConnectionManager(LoggerMixin):
                 self.log_warning(f"⚠️ Failed to forward audio to OpenAI for {device_id}: {e}")
         else:
             self.log_warning(f"⚠️ No OpenAI connection for {device_id}")
-    
-    async def _silence_detection_loop(self, device_id: str):
-        """Detect silence and trigger OpenAI responses"""
-        last_commit_time = 0
-        
-        while device_id in self.connections:
-            try:
-                await asyncio.sleep(0.5)  # Check every 500ms
-                
-                if device_id not in self.last_audio_time:
-                    continue
-                
-                current_time = time.time()
-                silence_duration = current_time - self.last_audio_time[device_id]
-                
-                # Trigger response after silence threshold
-                if (silence_duration >= self.silence_threshold and 
-                    current_time - last_commit_time > 2.0):  # Don't trigger too frequently
-                    
-                    # Only trigger if we received recent audio (within last 10 seconds)
-                    if current_time - self.last_audio_time[device_id] < 10.0:
-                        self.log_info(f"🎯 Triggering response for {device_id} after {silence_duration:.1f}s silence")
-                        
-                        try:
-                            await self.openai_service.commit_audio_buffer(device_id)
-                            await self.openai_service.create_response(device_id)
-                            last_commit_time = current_time
-                            self.log_info(f"✅ Response triggered for {device_id}")
-                        except Exception as e:
-                            self.log_warning(f"⚠️ Failed to trigger response for {device_id}: {e}")
-                
-            except Exception as e:
-                self.log_error(f"❌ Silence detection error for {device_id}: {e}")
-                break
     
     async def _handle_text_message(self, device_id: str, data: dict):
         """Handle JSON text messages"""
@@ -339,7 +328,6 @@ class WebSocketConnectionManager(LoggerMixin):
     async def _safe_send_message(self, websocket: WebSocket, device_id: str, message: dict) -> bool:
         """Safely send JSON message to WebSocket"""
         try:
-            # Check if WebSocket is still connected
             if hasattr(websocket, 'client_state') and websocket.client_state.name != 'CONNECTED':
                 self.log_warning(f"⚠️ WebSocket not connected for {device_id}")
                 return False
@@ -384,13 +372,14 @@ class WebSocketConnectionManager(LoggerMixin):
                     "type": "server_ping",
                     "timestamp": current_time,
                     "inactive_duration": inactive_duration,
-                    "connection_duration": current_time - self.connection_times.get(device_id, current_time)
+                    "connection_duration": current_time - self.connection_times.get(device_id, current_time),
+                    "openai_responding": self.openai_responding.get(device_id, False),
+                    "vad_mode": "openai_server"
                 }
                 
                 if not await self._safe_send_message(websocket, device_id, ping_message):
                     break
                 
-                # Check for prolonged inactivity
                 if inactive_duration > self.activity_timeout:
                     self.log_warning(f"⚠️ Device {device_id} inactive for {inactive_duration:.1f}s")
                     
@@ -450,8 +439,8 @@ class WebSocketConnectionManager(LoggerMixin):
         # Clean up connection data safely
         collections_to_clean = [
             (self.connections, "connections"),
-            (self.last_audio_time, "last_audio_time"),
-            (self.last_activity, "last_activity")
+            (self.last_activity, "last_activity"),
+            (self.openai_responding, "openai_responding")
         ]
         
         for collection, name in collections_to_clean:
@@ -475,7 +464,9 @@ class WebSocketConnectionManager(LoggerMixin):
                 "last_activity": self.last_activity.get(device_id, 0),
                 "inactive_duration": current_time - self.last_activity.get(device_id, current_time),
                 "has_keepalive": device_id in self.keepalive_tasks,
-                "openai_connected": device_id in self.openai_service.active_connections
+                "openai_connected": device_id in self.openai_service.active_connections,
+                "openai_responding": self.openai_responding.get(device_id, False),
+                "vad_mode": "openai_server"
             }
             for device_id in self.connections.keys()
         }
