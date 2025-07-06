@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     
     # Audio Configuration
     audio_format: str = "pcm16"
-    audio_sample_rate: int = 16000
+    audio_sample_rate: int = 24000
     audio_channels: int = 1
     audio_bits_per_sample: int = 16
     audio_buffer_size: int = 1024

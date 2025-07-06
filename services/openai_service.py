@@ -98,15 +98,26 @@ class OpenAIConnection(LoggerMixin):
             # Forward audio to ESP32
             audio_b64 = data.get('delta')
             if audio_b64:
-                audio_data = base64.b64decode(audio_b64)
-                self.log_info(f"🔊 Received audio delta for {self.device_id}: {len(audio_data)} bytes")
-                self.audio_callback(self.device_id, audio_data)
+                try:
+                    audio_data = base64.b64decode(audio_b64)
+                    self.log_info(f"🔊 Decoded audio delta for {self.device_id}: {len(audio_data)} bytes")
+                
+                    # FIXED: Call the callback immediately with await
+                    if self.audio_callback:
+                        await self.audio_callback(self.device_id, audio_data)
+                        self.log_info(f"✅ Audio callback completed for {self.device_id}")
+                    else:
+                        self.log_error(f"❌ No audio callback registered for {self.device_id}")
+                    
+                except Exception as e:
+                    self.log_error(f"❌ Failed to process audio delta for {self.device_id}: {e}")
             else:
                 self.log_warning(f"⚠️ Empty audio delta for {self.device_id}")
         
         elif msg_type == 'response.audio.done':
             self.log_info(f"🎵 Audio response completed for {self.device_id}")
-        
+            if self.audio_callback:
+            await self.audio_callback(self.device_id, b'')
         elif msg_type == 'response.done':
             response_id = data.get('response', {}).get('id', 'unknown')
             self.log_info(f"✅ Response completed for {self.device_id}: {response_id}")
@@ -234,10 +245,21 @@ class OpenAIConnection(LoggerMixin):
 class OpenAIService(LoggerMixin):
     """Fixed OpenAI service - RACE CONDITION SAFE"""
     
-    def __init__(self, api_key: str):
+    def __init__(self, device_id: str, system_prompt: str, api_key: str,
+                 audio_callback: Callable[[str, bytes], None]):
         super().__init__()
+        self.device_id = device_id
+        self.system_prompt = system_prompt
         self.api_key = api_key
-        self.active_connections = {}
+        self.audio_callback = audio_callback  # Store the callback
+        
+        self.websocket: Optional[websockets.WebSocketClientProtocol] = None
+        self.is_connected = False
+        self.session_configured = False
+        
+        # ADDED: Audio streaming state
+        self.audio_streaming = False
+
     
     async def create_connection(self, device_id: str, system_prompt: str,
                               audio_callback: Callable[[str, bytes], None]) -> OpenAIConnection:
