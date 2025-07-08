@@ -246,41 +246,59 @@ class SecurityMiddleware(BaseHTTPMiddleware, LoggerMixin):
         
         return None
     
-    def _is_suspicious_path(self, path: str) -> bool:
-        """Check for suspicious URL paths"""
-        path_lower = path.lower()
-        
-        # Common attack paths
-        suspicious_paths = [
-            "/admin", "/wp-admin", "/wp-login", "/phpMyAdmin",
-            "/config", "/.env", "/backup", "/db", "/database",
-            "/phpmyadmin", "/mysql", "/temp", "/tmp",
-            "/.git", "/.svn", "/config.php", "/wp-config.php",
-            "/etc/passwd", "/proc/version", "/bin/bash"
-        ]
-        
-        for suspicious in suspicious_paths:
-            if suspicious in path_lower:
-                return True
-        
-        # Check for directory traversal attempts
-        if "../" in path or "..%2f" in path_lower or "..%5c" in path_lower:
-            return True
-        
-        # Check for SQL injection attempts in path - but exclude legitimate device IDs
-        sql_indicators = ["union", "select", "insert", "delete", "drop", "alter"]
-        for indicator in sql_indicators:
-            if indicator in path_lower:
-                return True
-        
-        # Don't flag legitimate device ID patterns in auth routes
-        if "/auth/verify/" in path_lower:
-            device_id_part = path_lower.split("/auth/verify/")[-1]
-            # Allow valid device ID patterns (4 letters + 4 digits)
-            import re
-            if re.match(r'^[a-z0-9]{4,8}$', device_id_part):
-                return False
+    # Fix for middleware/security.py
+# Replace the _is_suspicious_path method with this corrected version
 
+def _is_suspicious_path(self, path: str) -> bool:
+    """Check for suspicious URL paths"""
+    path_lower = path.lower()
+    
+    # Common attack paths
+    suspicious_paths = [
+        "/admin", "/wp-admin", "/wp-login", "/phpMyAdmin",
+        "/config", "/.env", "/backup", "/db", "/database",
+        "/phpmyadmin", "/mysql", "/temp", "/tmp",
+        "/.git", "/.svn", "/config.php", "/wp-config.php",
+        "/etc/passwd", "/proc/version", "/bin/bash"
+    ]
+    
+    for suspicious in suspicious_paths:
+        if suspicious in path_lower:
+            return True
+    
+    # Check for directory traversal attempts
+    if "../" in path or "..%2f" in path_lower or "..%5c" in path_lower:
+        return True
+    
+    # Check for SQL injection attempts in path - but exclude legitimate device IDs
+    sql_indicators = ["union", "select", "insert", "delete", "drop", "alter"]
+    for indicator in sql_indicators:
+        if indicator in path_lower:
+            return True
+    
+    # ✅ FIXED: Don't flag legitimate device ID patterns in auth routes
+    if "/auth/verify/" in path_lower:
+        device_id_part = path_lower.split("/auth/verify/")[-1]
+        # Allow valid device ID patterns (4 letters + 4 digits)
+        import re
+        if re.match(r'^[a-z]{4}\d{4}$', device_id_part):
+            return False
+    
+    # ✅ FIXED: Don't flag legitimate device ID patterns in user routes
+    if "/users/" in path_lower:
+        device_id_part = path_lower.split("/users/")[-1].split("/")[0]  # Get first part after /users/
+        import re
+        if re.match(r'^[a-z]{4}\d{4}$', device_id_part):
+            return False
+    
+    # ✅ FIXED: Don't flag legitimate device ID patterns in WebSocket routes
+    if "/ws/" in path_lower:
+        device_id_part = path_lower.split("/ws/")[-1]
+        import re
+        if re.match(r'^[a-z]{4}\d{4}$', device_id_part):
+            return False
+    
+    return False
     
     def _add_security_headers(self, response: Response) -> Response:
         """Add security headers to response"""
