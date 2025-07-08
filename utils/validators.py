@@ -115,7 +115,7 @@ class UserValidator:
         Returns:
             Tuple[bool, Optional[str]]: (is_valid, error_message)
         """
-        if not name or not name.strip():
+        if not name or len(name.strip()) == 0:
             return False, "Name cannot be empty"
         
         name = name.strip()
@@ -124,13 +124,22 @@ class UserValidator:
             return False, "Name must be at least 1 character long"
         
         if len(name) > 100:
-            return False, "Name cannot exceed 100 characters"
+            return False, "Name must be less than 100 characters"
         
-        # Check for valid characters (letters, spaces, common punctuation)
-        if not re.match(r"^[a-zA-Z\s\-'.]+$", name):
-            return False, "Name contains invalid characters"
+        # Allow letters, numbers, spaces, hyphens, and apostrophes
+        import re
+        if not re.match(r"^[a-zA-Z0-9\s\-'\.]+$", name):
+            return False, "Name can only contain letters, numbers, spaces, hyphens, apostrophes, and periods"
         
-        return True, None
+        # Check for excessive spaces
+        if '  ' in name:  # Double spaces
+            return False, "Name cannot contain consecutive spaces"
+        
+        # Check for only numbers
+        if name.isdigit():
+            return False, "Name cannot be only numbers"
+        
+        return True, ""
     
     @staticmethod
     def validate_user_age(age: int) -> Tuple[bool, Optional[str]]:
@@ -149,7 +158,7 @@ class UserValidator:
         if age > 120:
             return False, "Age cannot exceed 120"
         
-        return True, None
+        return True,""
 
 
 class PromptValidator:

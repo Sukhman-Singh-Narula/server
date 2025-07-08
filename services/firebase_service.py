@@ -327,11 +327,21 @@ class FirebaseService(LoggerMixin):
     # Utility methods
     def _user_to_dict(self, user: User) -> Dict[str, Any]:
         """Convert User object to dictionary for Firebase"""
+    
+        # Safe enum handling
+        try:
+            if hasattr(user.status, 'value'):
+                status_value = user.status.value
+            else:
+                status_value = str(user.status)
+        except AttributeError:
+            status_value = 'active'  # Safe fallback
+    
         return {
             'device_id': user.device_id,
             'name': user.name,
             'age': user.age,
-            'status': user.status if isinstance(user.status, str) else user.status.value,
+            'status': status_value,
             'progress': {
                 'season': user.progress.season,
                 'episode': user.progress.episode,
@@ -370,11 +380,19 @@ class FirebaseService(LoggerMixin):
     
     def _system_prompt_to_dict(self, prompt: SystemPrompt) -> Dict[str, Any]:
         """Convert SystemPrompt object to dictionary for Firebase"""
+        try:
+            if hasattr(prompt.prompt_type, 'value'):
+                prompt_type_value = prompt.prompt_type.value
+            else:
+                prompt_type_value = str(prompt.prompt_type)
+        except AttributeError:
+            prompt_type_value = 'learning'  # Safe fallback
+    
         return {
             'season': prompt.season,
             'episode': prompt.episode,
             'prompt': prompt.prompt,
-            'prompt_type': prompt.prompt_type if isinstance(prompt.prompt_type, str) else prompt.prompt_type.value,
+            'prompt_type': prompt_type_value,
             'metadata': prompt.metadata,
             'created_at': prompt.created_at,
             'updated_at': prompt.updated_at,
