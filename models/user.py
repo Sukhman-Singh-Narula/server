@@ -82,11 +82,19 @@ class UserResponse(BaseModel):
     @classmethod
     def from_user(cls, user: User) -> "UserResponse":
         """Create response from User model"""
+        try:
+            if hasattr(user.status, 'value'):
+                status_value = user.status.value
+            else:
+                status_value = str(user.status)
+        except AttributeError:
+            status_value = 'active'  # Safe fallback
+    
         return cls(
             device_id=user.device_id,
             name=user.name,
             age=user.age,
-            status=user.status.value,
+            status=status_value,
             season=user.progress.season,
             episode=user.progress.episode,
             words_learnt_count=len(user.progress.words_learnt),
