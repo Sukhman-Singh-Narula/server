@@ -1,0 +1,7 @@
+{"timestamp": "2025-06-30T14:05:41.944781", "level": "WARNING", "logger": "security", "message": "Security event: websocket_error", "module": "logger", "function": "log_security_event", "line": 240, "device_id": "ABCD1234"}
+{"timestamp": "2025-06-30T14:06:06.048752", "level": "WARNING", "logger": "security", "message": "Security event: websocket_error", "module": "logger", "function": "log_security_event", "line": 240, "device_id": "ABCD1234"}
+{"timestamp": "2025-06-30T14:06:43.939168", "level": "WARNING", "logger": "security", "message": "Security event: websocket_error", "module": "logger", "function": "log_security_event", "line": 240, "device_id": "ABCD1234"}
+{"timestamp": "2025-07-02T09:07:43.139090", "level": "WARNING", "logger": "security", "message": "Security event: websocket_error", "module": "logger", "function": "log_security_event", "line": 240, "device_id": "ABCD1234"}
+{"timestamp": "2025-07-02T09:08:06.901668", "level": "WARNING", "logger": "security", "message": "Security event: websocket_error", "module": "logger", "function": "log_security_event", "line": 240, "device_id": "ABCD1234"}
+{"timestamp": "2025-07-08T09:00:53.444597", "level": "WARNING", "logger": "security", "message": "Security event: suspicious_path_access", "module": "logger", "function": "log_security_event", "line": 240, "device_id": null}
+{"timestamp": "2025-07-08T09:10:16.949520", "level": "WARNING", "logger": "security", "message": "Security event: suspicious_path_access", "module": "logger", "function": "log_security_event", "line": 240, "device_id": null}

@@ -1,0 +1,7 @@
+{"timestamp": "2025-07-08T08:59:12.523457", "level": "INFO", "logger": "user", "message": "User registered", "module": "logger", "function": "log_user_registration", "line": 167, "device_id": "VVDU1079"}
+{"timestamp": "2025-07-08T09:00:57.120467", "level": "INFO", "logger": "user", "message": "User registered", "module": "logger", "function": "log_user_registration", "line": 167, "device_id": "TEST1234"}
+{"timestamp": "2025-07-08T09:27:15.369636", "level": "INFO", "logger": "user", "message": "User registered", "module": "logger", "function": "log_user_registration", "line": 167, "device_id": "PXLG6002"}
+{"timestamp": "2025-07-08T09:27:33.110518", "level": "INFO", "logger": "user", "message": "User registered", "module": "logger", "function": "log_user_registration", "line": 167, "device_id": "TEST0002"}
+{"timestamp": "2025-07-08T09:27:34.824340", "level": "INFO", "logger": "user", "message": "User registered", "module": "logger", "function": "log_user_registration", "line": 167, "device_id": "TEST0003"}
+{"timestamp": "2025-07-08T09:27:36.628359", "level": "INFO", "logger": "user", "message": "User registered", "module": "logger", "function": "log_user_registration", "line": 167, "device_id": "TEST0004"}
+{"timestamp": "2025-07-08T09:27:38.385329", "level": "INFO", "logger": "user", "message": "User registered", "module": "logger", "function": "log_user_registration", "line": 167, "device_id": "TEST0005"}
