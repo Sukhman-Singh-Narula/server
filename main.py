@@ -1,418 +1,222 @@
 """
-ESP32 Audio Streaming Server - Main Application (Fixed)
+ESP32 Audio Streaming Server - Updated Main Application
+Fixed version with device API routes
 """
 import asyncio
+import uvicorn
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from datetime import datetime
-import uvicorn
 
-# Configuration and settings
-from config.settings import get_settings, validate_settings
-
-# Routes
-from routes.auth import router as auth_router
-from routes.users import router as users_router
-from routes.prompts import router as prompts_router
-from routes.websocket import router as websocket_router
-
-# Middleware
-from middleware.security import SecurityMiddleware, get_cors_config
-from middleware.logging import RequestLoggingMiddleware, MetricsCollectionMiddleware, set_metrics_middleware
-
-# Services
-from services.firebase_service import get_firebase_service
-from services.openai_service import get_openai_service
+# Import all route modules
+from routes import auth, users, prompts, websocket, device  # Added device routes
 from services.websocket_service import get_websocket_manager
+from services.openai_service import get_openai_service
+from services.firebase_service import get_firebase_service
+from utils.logger import LoggerMixin
+from config.settings import get_settings
 
-# Utils
-from utils.logger import setup_logging
-from utils.exceptions import handle_generic_error
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan manager"""
+class AppManager(LoggerMixin):
+    """Application lifecycle manager"""
     
-    # Startup
-    print("🚀 Starting ESP32 Audio Streaming Server...")
+    def _init_(self):
+        super()._init_()
+        self.settings = get_settings()
     
-    try:
-        # Validate configuration
-        if not validate_settings():
-            raise Exception("Configuration validation failed")
-        
-        # Initialize logging
-        setup_logging()
-        print("✅ Logging initialized")
+    async def startup(self):
+        """Initialize services on startup"""
+        self.log_info("🚀 Starting ESP32 Audio Streaming Server")
         
         # Initialize services
         firebase_service = get_firebase_service()
-        print("✅ Firebase service initialized")
-        
-        openai_service = get_openai_service()
-        print("✅ OpenAI service initialized")
-        
         websocket_manager = get_websocket_manager()
-        print("✅ WebSocket manager initialized")
+        openai_service = get_openai_service()
         
-        print("🎯 Server startup completed successfully")
+        # Test Firebase connection
+        firebase_healthy = await firebase_service.health_check()
+        self.log_info(f"Firebase connection: {'✅ Healthy' if firebase_healthy else '❌ Failed'}")
         
-        yield
+        # Log service status
+        self.log_info(f"WebSocket manager: {'✅ Ready' if websocket_manager else '❌ Failed'}")
+        self.log_info(f"OpenAI service: {'✅ Ready' if openai_service else '❌ Failed'}")
         
-    except Exception as e:
-        print(f"❌ Startup failed: {e}")
-        raise
+        self.log_info("✅ ESP32 Audio Streaming Server started successfully")
+        self.log_info(f"🌐 Server listening on: {self.settings.host}:{self.settings.port}")
+        self.log_info(f"📚 API documentation: http://{self.settings.host}:{self.settings.port}/docs")
     
-    finally:
-        # Shutdown
-        print("🛑 Shutting down ESP32 Audio Streaming Server...")
+    async def shutdown(self):
+        """Clean up resources on shutdown"""
+        self.log_info("🛑 Shutting down ESP32 Audio Streaming Server")
         
         try:
             # Close WebSocket connections
             websocket_manager = get_websocket_manager()
             await websocket_manager.shutdown()
-            print("✅ WebSocket connections closed")
             
             # Close OpenAI connections
             openai_service = get_openai_service()
             await openai_service.close_all_connections()
-            print("✅ OpenAI connections closed")
             
-            print("✅ Server shutdown completed")
+            self.log_info("✅ Server shutdown completed")
             
         except Exception as e:
-            print(f"⚠️ Shutdown error: {e}")
+            self.log_error(f"❌ Error during shutdown: {e}")
+
+
+app_manager = AppManager()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan manager"""
+    # Startup
+    await app_manager.startup()
+    yield
+    # Shutdown
+    await app_manager.shutdown()
 
 
 # Create FastAPI application
-def create_application() -> FastAPI:
-    """Create and configure FastAPI application"""
+app = FastAPI(
+    title="ESP32 Audio Streaming Server",
+    description="""
+    *ESP32 Audio Streaming Server* for Real-time Voice Learning
+
+    This server provides:
+    - 🎤 Real-time audio streaming from ESP32 devices
+    - 🤖 OpenAI GPT-4 Realtime API integration
+    - 📚 Educational content management
+    - 👥 User progress tracking
+    - 🔌 WebSocket connections for low-latency audio
+
+    ## Quick Start for ESP32
+    1. *Register Device*: POST /auth/register
+    2. *Connect WebSocket*: ws://your-server:8001/ws/{device_id}
+    3. *Stream Audio*: Send audio bytes through WebSocket
+    4. *Receive Responses*: Get AI audio responses in real-time
+
+    ## Device ID Format
+    Must be 4 uppercase letters followed by 4 digits (e.g., ABCD1234)
+    """,
+    version="1.0.0",
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+# CORS configuration for development
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, specify actual origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# Global exception handler
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Global exception handler for unhandled errors"""
+    import logging
+    logger = logging.getLogger(_name_)
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
     
-    settings = get_settings()
-    
-    app = FastAPI(
-        title=settings.app_name,
-        version=settings.app_version,
-        description="""
-        ## ESP32 Audio Streaming Server
-        
-        A comprehensive FastAPI server for managing ESP32 device connections with OpenAI Realtime API integration.
-        
-        ### Features:
-        - **Device Authentication**: Secure device ID validation (ABCD1234 format)
-        - **Real-time Audio Streaming**: WebSocket connections for ESP32 ↔ OpenAI audio streaming
-        - **User Management**: Registration, progress tracking, and session management
-        - **Learning System**: Season/episode progression with system prompts
-        - **Firebase Integration**: User data and prompt storage
-        - **Security**: Rate limiting, IP blocking, and request validation
-        - **Monitoring**: Comprehensive logging and metrics collection
-        
-        ### Getting Started:
-        1. Register a user with POST /auth/register
-        2. Upload system prompts with POST /prompts/
-        3. Connect ESP32 via WebSocket /ws/{device_id}
-        4. Monitor progress with GET /users/{device_id}
-        """,
-        docs_url="/docs",
-        redoc_url="/redoc",
-        lifespan=lifespan,
-        debug=settings.debug
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal Server Error",
+            "message": "An unexpected error occurred",
+            "path": str(request.url)
+        }
     )
-    
-    return app
 
 
-# Initialize app
-app = create_application()
-
-# Add CORS middleware
-cors_config = get_cors_config()
-app.add_middleware(CORSMiddleware, **cors_config)
-
-# Add custom middleware (order matters - security first, then logging)
-app.add_middleware(SecurityMiddleware)
-app.add_middleware(RequestLoggingMiddleware)
-
-# Add metrics middleware and store reference
-metrics_middleware = MetricsCollectionMiddleware(app)
-app.add_middleware(MetricsCollectionMiddleware)
-set_metrics_middleware(metrics_middleware)
-
-# Include routers
-app.include_router(auth_router)
-app.include_router(users_router)
-app.include_router(prompts_router)
-app.include_router(websocket_router)
+# Include all route modules
+app.include_router(auth.router, prefix="/api/v1")
+app.include_router(users.router, prefix="/api/v1") 
+app.include_router(prompts.router, prefix="/api/v1")
+app.include_router(websocket.router)  # No prefix for WebSocket routes
+app.include_router(device.router)     # Device API routes (NEW!)
 
 
 # Root endpoint
 @app.get("/", 
-         summary="Server status",
-         description="Get server status and basic information")
+         summary="Server Information",
+         description="Get basic server information and status")
 async def root():
-    """Root endpoint returning server status"""
+    """
+    Root endpoint providing server information and health status
+    """
     settings = get_settings()
     
-    return {
-        "message": "ESP32 Audio Streaming Server is running",
-        "version": settings.app_version,
-        "status": "healthy",
-        "documentation": "/docs",
-        "websocket_endpoint": "/ws/{device_id}",
-        "features": [
-            "ESP32 WebSocket connections",
-            "OpenAI Realtime API integration", 
-            "User registration and management",
-            "System prompt management",
-            "Session tracking",
-            "Security middleware",
-            "Comprehensive logging"
-        ]
-    }
-
-
-# Health check endpoint
-@app.get("/health",
-         summary="Health check",
-         description="Comprehensive health check for all services")
-async def health_check():
-    """Comprehensive health check endpoint"""
-    
-    health_status = {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "services": {}
-    }
-    
+    # Get service status
     try:
-        # Check Firebase health
         firebase_service = get_firebase_service()
         firebase_healthy = await firebase_service.health_check()
-        health_status["services"]["firebase"] = "healthy" if firebase_healthy else "unhealthy"
-        
-        # Check WebSocket manager
-        websocket_manager = get_websocket_manager()
-        active_connections = len(websocket_manager.connections)
-        health_status["services"]["websocket"] = {
-            "status": "healthy",
-            "active_connections": active_connections
-        }
-        
-        # Check OpenAI service
-        openai_service = get_openai_service()
-        openai_connections = len(openai_service.active_connections)
-        health_status["services"]["openai"] = {
-            "status": "healthy",
-            "active_connections": openai_connections
-        }
-        
-        # Overall status - check if all services are healthy
-        all_healthy = True
-        for service_name, service_status in health_status["services"].items():
-            if isinstance(service_status, dict):
-                if service_status.get("status") != "healthy":
-                    all_healthy = False
-                    break
-            elif service_status != "healthy":
-                all_healthy = False
-                break
-        
-        health_status["status"] = "healthy" if all_healthy else "degraded"
-        
-        # Return appropriate status code
-        status_code = status.HTTP_200_OK if all_healthy else status.HTTP_503_SERVICE_UNAVAILABLE
-        
-        return JSONResponse(
-            status_code=status_code,
-            content=health_status
-        )
-        
-    except Exception as e:
-        health_status["status"] = "unhealthy"
-        health_status["error"] = str(e)
-        
-        return JSONResponse(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            content=health_status
-        )
-
-
-# Metrics endpoint
-@app.get("/metrics",
-         summary="Application metrics",
-         description="Get application performance metrics")
-async def get_metrics():
-    """Get application metrics"""
-    try:
-        from middleware.logging import get_metrics_middleware
-        
-        metrics_middleware = get_metrics_middleware()
-        if metrics_middleware:
-            metrics = metrics_middleware.get_current_metrics()
-            return {
-                "metrics": metrics,
-                "note": "Metrics are collected automatically and reset periodically"
-            }
-        else:
-            return {
-                "message": "Metrics collection not available",
-                "metrics": {}
-            }
+    except Exception:
+        firebase_healthy = False
     
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=handle_generic_error(e)
-        )
-
-
-# Global exception handlers
-from utils.exceptions import (
-    ValidationException, UserNotFoundException, UserAlreadyExistsException,
-    SystemPromptNotFoundException, WebSocketConnectionException, 
-    RateLimitException, SecurityException, handle_validation_error, 
-    handle_user_error, handle_generic_error
-)
-
-@app.exception_handler(ValidationException)
-async def validation_exception_handler(request, exc: ValidationException):
-    """Handle validation exceptions globally"""
-    return JSONResponse(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        content=handle_validation_error(exc)
-    )
-
-@app.exception_handler(UserNotFoundException)
-async def user_not_found_handler(request, exc: UserNotFoundException):
-    """Handle user not found exceptions"""
-    return JSONResponse(
-        status_code=status.HTTP_404_NOT_FOUND,
-        content=handle_user_error(exc)
-    )
-
-@app.exception_handler(UserAlreadyExistsException)
-async def user_exists_handler(request, exc: UserAlreadyExistsException):
-    """Handle user already exists exceptions"""
-    return JSONResponse(
-        status_code=status.HTTP_409_CONFLICT,
-        content=handle_user_error(exc)
-    )
-
-@app.exception_handler(SystemPromptNotFoundException)
-async def prompt_not_found_handler(request, exc: SystemPromptNotFoundException):
-    """Handle system prompt not found exceptions"""
-    return JSONResponse(
-        status_code=status.HTTP_404_NOT_FOUND,
-        content={
-            "error": "System Prompt Not Found",
-            "message": exc.message,
-            "season": exc.season,
-            "episode": exc.episode,
-            "code": exc.error_code
-        }
-    )
-
-@app.exception_handler(RateLimitException)
-async def rate_limit_handler(request, exc: RateLimitException):
-    """Handle rate limit exceptions"""
-    return JSONResponse(
-        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-        content={
-            "error": "Rate Limit Exceeded",
-            "message": exc.message,
-            "limit": exc.limit,
-            "window_seconds": exc.window,
-            "code": exc.error_code
-        }
-    )
-
-@app.exception_handler(SecurityException)
-async def security_exception_handler(request, exc: SecurityException):
-    """Handle security violations"""
-    # Log security event
-    from utils.logger import log_security_event
-    log_security_event(
-        exc.violation_type,
-        exc.identifier,
-        {
-            "path": str(request.url.path),
-            "method": request.method,
-            "details": exc.details
-        }
-    )
+    websocket_manager = get_websocket_manager()
+    openai_service = get_openai_service()
     
-    return JSONResponse(
-        status_code=status.HTTP_403_FORBIDDEN,
-        content={
-            "error": "Security Violation",
-            "message": "Access denied due to security policy",
-            "code": exc.error_code
-        }
-    )
-
-@app.exception_handler(Exception)
-async def global_exception_handler(request, exc: Exception):
-    """Global exception handler for unhandled errors"""
-    import logging
+    active_connections = websocket_manager.get_active_connections()
     
-    logger = logging.getLogger(__name__)
-    logger.error(f"Unhandled exception: {exc}", exc_info=True)
-    
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={
-            "error": "Internal Server Error",
-            "message": "An unexpected error occurred",
-            "request_id": request.headers.get("X-Request-ID", "unknown")
-        }
-    )
-
-
-@app.exception_handler(404)
-async def not_found_handler(request, exc):
-    """Custom 404 handler"""
-    return JSONResponse(
-        status_code=status.HTTP_404_NOT_FOUND,
-        content={
-            "error": "Not Found",
-            "message": f"The requested endpoint {request.url.path} was not found",
-            "available_endpoints": [
-                "/docs - API documentation",
-                "/health - Health check",
-                "/auth/register - User registration", 
-                "/users/{device_id} - User management",
-                "/prompts/ - System prompt management",
-                "/ws/{device_id} - WebSocket connection"
+    return {
+        "service": "ESP32 Audio Streaming Server",
+        "version": "1.0.0",
+        "status": "running",
+        "description": "Real-time audio streaming server for ESP32 educational devices",
+        "endpoints": {
+            "documentation": "/docs",
+            "health": "/api/health",
+            "websocket": "/ws/{device_id}",
+            "device_api": "/api/device/connect",
+            "audio_processing": "/api/audio/process",
+            "user_registration": "/api/v1/auth/register"
+        },
+        "services": {
+            "firebase": "healthy" if firebase_healthy else "unhealthy",
+            "websocket": "healthy" if websocket_manager else "unhealthy",
+            "openai": "healthy" if openai_service else "unhealthy"
+        },
+        "statistics": {
+            "active_connections": len(active_connections),
+            "openai_connections": openai_service.get_connection_count() if openai_service else 0
+        },
+        "device_requirements": {
+            "device_id_format": "4 uppercase letters + 4 digits (e.g., ABCD1234)",
+            "audio_format": "PCM16, 24kHz, Mono",
+            "connection_flow": [
+                "1. Register device via /api/v1/auth/register",
+                "2. Test connection via /api/health", 
+                "3. Connect device via /api/device/connect",
+                "4. Open WebSocket to /ws/{device_id}",
+                "5. Start audio streaming"
             ]
         }
-    )
+    }
 
 
-# Development server startup
-if __name__ == "__main__":
+# Additional health endpoint (for compatibility)
+@app.get("/health",
+         summary="Health Check", 
+         description="Simple health check endpoint")
+async def health():
+    """Simple health check for load balancers"""
+    return {"status": "healthy", "service": "ESP32 Audio Streaming Server"}
+
+
+if _name_ == "_main_":
+    # Run the server
     settings = get_settings()
-    
-    print(f"""
-╔══════════════════════════════════════════════════════════════╗
-║                ESP32 Audio Streaming Server                 ║
-║                        Version {settings.app_version}                        ║
-╠══════════════════════════════════════════════════════════════╣
-║  📋 Documentation: http://{settings.host}:{settings.port}/docs               ║
-║  🔗 WebSocket: ws://{settings.host}:{settings.port}/ws/{{device_id}}         ║
-║  💡 Health Check: http://{settings.host}:{settings.port}/health              ║
-╚══════════════════════════════════════════════════════════════╝
-    """)
     
     uvicorn.run(
         "main:app",
         host=settings.host,
         port=settings.port,
         reload=settings.debug,
-        log_level=settings.log_level.lower(),
-        access_log=True,
-        server_header=False,  # Security: hide server info
-        date_header=False     # Security: hide date header
+        log_level="info" if not settings.debug else "debug"
     )
